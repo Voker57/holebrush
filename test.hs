@@ -110,41 +110,44 @@ findOpeningTag' processedChunks skip (lastChunk:chunks) tag =
 
 findOpeningTag = findOpeningTag' [] 0
 
-sanitizer = reverse . (sanitizer' [])
+-- <widow> </orphan>
+-- widow reaper assumes that orphans are already killed
 
-sanitizer' output [] = output
-sanitizer' output (nextChunk:input) =
+orphanReaper = reverse . (orphanReaper' [])
+
+orphanReaper' output [] = output
+orphanReaper' output (nextChunk:input) =
   if isClosingTag nextChunk then
     case findOpeningTag output nextChunk of
-      Just newOutput -> sanitizer' (nextChunk:newOutput) input
-      Nothing -> sanitizer' ((Plaintext $ toPlainText nextChunk):output) input
+      Just newOutput -> orphanReaper' (nextChunk:newOutput) input
+      Nothing -> orphanReaper' ((Plaintext $ toPlainText nextChunk):output) input
     else
-      sanitizer' (nextChunk:output) input
+      orphanReaper' (nextChunk:output) input
 
-orphanScanner [] ((nextNumber, nextChunk):chunks) = 
+widowScanner [] ((nextNumber, nextChunk):chunks) = 
   if isOpeningTag nextChunk then
-    orphanScanner [(nextNumber, nextChunk)] chunks
+    widowScanner [(nextNumber, nextChunk)] chunks
   else 
-    orphanScanner [] chunks
-orphanScanner openedTags [] = openedTags
-orphanScanner openedTags@((lastNumber, lastOpen):restOpen) ((nextNumber, nextChunk):chunks) =
+    widowScanner [] chunks
+widowScanner openedTags [] = openedTags
+widowScanner openedTags@((lastNumber, lastOpen):restOpen) ((nextNumber, nextChunk):chunks) =
   if closingTag lastOpen == Just nextChunk then
-    orphanScanner restOpen chunks
+    widowScanner restOpen chunks
     else if isOpeningTag nextChunk then
-      orphanScanner ((nextNumber, nextChunk):openedTags) chunks
+      widowScanner ((nextNumber, nextChunk):openedTags) chunks
     else -- We can assume at this point no orphaned closing tags exist
-      orphanScanner openedTags chunks
+      widowScanner openedTags chunks
 
-orphanFilter ([], ((_, chunk):chunks)) = Just (chunk, ([], chunks))
-orphanFilter (_, []) = Nothing 
-orphanFilter ((o:orphans), (chunkTuple@(chunkNumber, chunkChunk):chunks)) =
+widowFilter ([], ((_, chunk):chunks)) = Just (chunk, ([], chunks))
+widowFilter (_, []) = Nothing 
+widowFilter ((o:orphans), (chunkTuple@(chunkNumber, chunkChunk):chunks)) =
   if o == chunkTuple then Just (Plaintext $ toPlainText chunkChunk, (orphans, chunks)) else Just (chunkChunk, ((o:orphans), chunks))
 
-orphanReaper :: [Chunk] -> [Chunk]
-orphanReaper chunks = let
+widowReaper :: [Chunk] -> [Chunk]
+widowReaper chunks = let
   numberedChunks = reverse (zip [0..] chunks)
-  orphanIds = orphanScanner [] $ reverse numberedChunks
-  in reverse $ unfoldr (orphanFilter) (orphanIds, numberedChunks)
+  widowIds = widowScanner [] $ reverse numberedChunks
+  in reverse $ unfoldr (widowFilter) (widowIds, numberedChunks)
 
 folder (openedTags, text) ItalicStart = (Italic:openedTags, text ++ "<em>")
 folder (openedTags, text) BoldStart = (Bold:openedTags, text ++ "<strong>")
