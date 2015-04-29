@@ -15,10 +15,26 @@ import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Data.List
 
+class Renderable a where
+  render :: a -> String
 
-data Paragraph = Paragraph [Chunk]
+data Paragraph = Paragraph [Chunk] deriving (Show, Eq)
 
-data Chunk = ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String deriving (Eq, Show)
+instance Renderable Paragraph where
+  render (Paragraph chunks) = "<p>" ++ (concat $ map (render) chunks) ++ "</p>"
+
+instance Renderable Chunk where
+  render ItalicStart = "<i>"
+  render ItalicEnd = "</i>"
+  render BoldStart = "<b>"
+  render BoldEnd = "</b>"
+  render (Plaintext s) = s
+  render Whitespace = " "
+
+instance (Renderable a) => Renderable [a] where
+  render xs = concat $ map (render) xs
+
+data Chunk = ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Whitespace deriving (Eq, Show)
 
 isClosingTag :: Chunk -> Bool
 isClosingTag t = case t of
@@ -46,7 +62,7 @@ toPlainText t = case t of
 data OpenedTag = Italic | Bold deriving (Eq, Show)
 
 italicStart = do
-  (char '_') 
+  char '_'
   notFollowedBy space
   return ItalicStart
 
@@ -66,33 +82,29 @@ boldEnd = do
   return BoldEnd
 
 whitespace = do
-  scs <- many1 space
-  return (Plaintext scs)
+  scs <- manyTill space (lookAhead $ try $ choice [string "\n\n" >> return (), eof, satisfy (not . isSpace) >> return ()])
+  return Whitespace
 
-word = do
-  sc <- anyChar
-  scs <- manyTill anyChar (lookAhead $ try $ choice [italicEnd >> return (), boldEnd >> return (), whitespace >> return (), eof])
+plainWord = do
+  sc <- satisfy (not . isSpace)
+  scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [italicEnd >> return (), boldEnd >> return (), space >> return (), eof, paragraphBreak])
   return (Plaintext (sc:scs))
 
-documentPiece = do
+word = do
   starts <- many $ try $ choice [italicStart, boldStart]
-  theWord <- word
+  theWord <- plainWord
   ends <- many $ choice [italicEnd, boldEnd]
-  theSpace <- option (Plaintext "") whitespace
-  return (starts ++ [theWord] ++ ends ++ [theSpace])
+  return (starts ++ [theWord] ++ ends)
 
 document = do
-  initialSpace <- option (undefined) (lineBreakingWhiteSpace)
-  paragraphs <- paragraph `sepEndBy` lineBreakingWhiteSpace
+  paragraphs <- paragraph `sepBy` paragraphBreak
   return paragraphs
 
-lineBreakingWhiteSpace = do
-  many (satisfy (\c -> isSpace c && not (c== '\n')))
-  char '\n'
-  many space
+paragraphBreak = do
+  string "\n\n"
   return ()
 
-paragraph = manyTill documentPiece (lookAhead $ choice [string "\n\n" >> return (), eof])
+paragraph = (word `sepBy` whitespace) >>= (return . Paragraph . intercalate [Whitespace])
 
 findOpeningTag' :: [Chunk] -> Integer -> [Chunk] -> Chunk -> Maybe [Chunk]
 findOpeningTag' processedChunks skip [] tag = Nothing
@@ -149,19 +161,11 @@ widowReaper chunks = let
   widowIds = widowScanner [] $ reverse numberedChunks
   in reverse $ unfoldr (widowFilter) (widowIds, numberedChunks)
 
-folder (openedTags, text) ItalicStart = (Italic:openedTags, text ++ "<em>")
-folder (openedTags, text) BoldStart = (Bold:openedTags, text ++ "<strong>")
-folder (Italic:openedTags, text) ItalicEnd = (openedTags, text ++ "</em>")
-folder (openedTags, text) ItalicEnd = (openedTags, text ++ "_")
-folder (Bold:openedTags, text) BoldEnd = (openedTags, text ++ "</strong>")
-folder (openedTags, text) BoldEnd = (openedTags, text ++ "*")
-folder (openedTags, text) (Plaintext str) = (openedTags, text ++ str)
-
 main = do
   input <- getContents
-  let (Right r) = parse document "(unknown)" input
-  undefined
---   let initialState = ([], "")
---   let (strayTags, text) = foldl' folder initialState r
---   let finalText = text ++ (concat $ map (\a -> case a of Italic -> "</em>"; Bold -> "</strong>") $ reverse strayTags)
---   putStr finalText
+  let rl = parse document "(unknown)" input
+  case rl of
+    Right text -> do
+      let sanitizedText = map (\(Paragraph pieces) -> Paragraph $ orphanReaper $ widowReaper pieces) text
+      putStrLn $ render sanitizedText
+    Left err -> print err
