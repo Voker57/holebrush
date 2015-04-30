@@ -14,6 +14,8 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Data.List
+import qualified Data.Text as T
+import Control.Monad
 
 class Renderable a where
   render :: a -> String
@@ -28,18 +30,24 @@ instance Renderable Chunk where
   render ItalicEnd = "</i>"
   render BoldStart = "<b>"
   render BoldEnd = "</b>"
+  render StrongStart = "<strong>"
+  render StrongEnd = "</strong>"
+  render EmphStart = "<em>"
+  render EmphEnd = "</em>"
   render (Plaintext s) = s
   render Whitespace = " "
 
 instance (Renderable a) => Renderable [a] where
   render xs = concat $ map (render) xs
 
-data Chunk = ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Whitespace deriving (Eq, Show)
+data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Whitespace deriving (Eq, Show)
 
 isClosingTag :: Chunk -> Bool
 isClosingTag t = case t of
   ItalicEnd -> True
   BoldEnd -> True
+  StrongEnd -> True
+  EmphEnd -> True
   _ -> False
 
 isOpeningTag :: Chunk -> Bool
@@ -49,36 +57,68 @@ closingTag :: Chunk -> Maybe Chunk
 closingTag t = case t of
   ItalicStart -> Just ItalicEnd
   BoldStart -> Just BoldEnd
+  EmphStart -> Just EmphEnd
+  StrongStart -> Just StrongEnd
   _ -> Nothing
 
 toPlainText :: Chunk -> String
 toPlainText t = case t of
-  ItalicStart -> "_"
-  ItalicEnd -> "_"
-  BoldStart -> "*"
-  BoldEnd -> "*"
+  ItalicStart -> "__"
+  ItalicEnd -> "__"
+  EmphStart -> "_"
+  EmphEnd -> "_"
+  BoldStart -> "**"
+  BoldEnd -> "**"
+  StrongStart -> "*"
+  StrongEnd -> "*"
   Plaintext str -> str
 
-data OpenedTag = Italic | Bold deriving (Eq, Show)
+wordBreak = choice [void space, eof]
+
+wordEndTag = do
+  choice [emphEnd, strongEnd, italicEnd, boldEnd]
+
+wordStartTag = do
+  choice [emphStart, strongStart, italicStart, boldStart]
 
 italicStart = do
-  char '_'
-  notFollowedBy space
+  string "__"
+  notFollowedBy wordBreak
   return ItalicStart
 
 boldStart = do
-  (char '*')
-  notFollowedBy space
+  string "**"
+  notFollowedBy wordBreak
   return BoldStart
 
+emphStart = do
+  char '_'
+  notFollowedBy wordBreak
+  return EmphStart
+
+strongStart = do
+  char '*'
+  notFollowedBy wordBreak
+  return StrongStart
+
+emphEnd = do
+  char '_'
+  lookAhead $ try (choice [void wordEndTag, void space, eof])
+  return EmphEnd
+
+strongEnd = do
+  char '*'
+  lookAhead $ try (choice [void wordEndTag, void space, eof])
+  return StrongEnd
+
 italicEnd = do
-  (char '_')
-  lookAhead $ try (choice [italicEnd >> return (), boldEnd >> return (), space >> return (), eof])
+  string "__"
+  lookAhead $ try (choice [void wordEndTag, void space, eof])
   return ItalicEnd
 
 boldEnd = do
-  (char '*')
-  lookAhead $ try (choice [italicEnd >> return (), boldEnd >> return (), space >> return (), eof])
+  string "__"
+  lookAhead $ try (choice [void wordEndTag, void space, eof])
   return BoldEnd
 
 whitespace = do
@@ -87,17 +127,19 @@ whitespace = do
 
 plainWord = do
   sc <- satisfy (not . isSpace)
-  scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [italicEnd >> return (), boldEnd >> return (), space >> return (), eof, paragraphBreak])
+  scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [wordEndTag >> return (), space >> return (), eof, paragraphBreak])
   return (Plaintext (sc:scs))
 
 word = do
-  starts <- many $ try $ choice [italicStart, boldStart]
+  starts <- many $ wordStartTag
   theWord <- plainWord
-  ends <- many $ choice [italicEnd, boldEnd]
+  ends <- many $ wordEndTag
   return (starts ++ [theWord] ++ ends)
 
 document = do
+  option () $ void whitespace
   paragraphs <- paragraph `sepBy` paragraphBreak
+  option () $ void whitespace
   return paragraphs
 
 paragraphBreak = do
@@ -163,7 +205,8 @@ widowReaper chunks = let
 
 main = do
   input <- getContents
-  let rl = parse document "(unknown)" input
+  let rl = parse document "(unknown)" $ T.strip $ T.pack input
+  print rl
   case rl of
     Right text -> do
       let sanitizedText = map (\(Paragraph pieces) -> Paragraph $ orphanReaper $ widowReaper pieces) text
