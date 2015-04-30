@@ -8,6 +8,7 @@
 
 module Main where
 
+import Data.List
 import Data.Maybe
 import Data.Char
 import Text.Parsec
@@ -21,6 +22,8 @@ class Renderable a where
   render :: a -> String
 
 data Paragraph = Paragraph [Chunk] deriving (Show, Eq)
+
+data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Image String (Maybe String) (Maybe String) | Whitespace | Link String [Chunk] deriving (Eq, Show)
 
 instance Renderable Paragraph where
   render (Paragraph chunks) = "<p>" ++ (concat $ map (render) chunks) ++ "</p>"
@@ -36,11 +39,53 @@ instance Renderable Chunk where
   render EmphEnd = "</em>"
   render (Plaintext s) = s
   render Whitespace = " "
+  render (Image src altMaybe (Just linkUri)) = render $ Link linkUri [(Image src altMaybe Nothing)]
+  render (Image src altMaybe Nothing) = "<img alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
+  render (Link _ _) = undefined
 
 instance (Renderable a) => Renderable [a] where
   render xs = concat $ map (render) xs
 
-data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Whitespace deriving (Eq, Show)
+-- Stolen shit
+spanList :: ([a] -> Bool) -> [a] -> ([a], [a])
+
+spanList _ [] = ([],[])
+spanList func list@(x:xs) =
+    if func list
+       then (x:ys,zs)
+       else ([],list)
+    where (ys,zs) = spanList func xs
+
+joinLists :: [a] -> [[a]] -> [a]
+joinLists delim l = concat (intersperse delim l)
+
+breakList :: ([a] -> Bool) -> [a] -> ([a], [a])
+breakList func = spanList (not . func)
+
+split :: Eq a => [a] -> [a] -> [[a]]
+split _ [] = []
+split delim str =
+    let (firstline, remainder) = breakList (isPrefixOf delim) str
+        in 
+        firstline : case remainder of
+                                   [] -> []
+                                   x -> if x == delim
+                                        then [] : []
+                                        else split delim 
+                                                 (drop (length delim) x)
+
+replace :: Eq a => [a] -> [a] -> [a] -> [a]
+replace old new l = joinLists new . split old $ l
+
+-- Really basic. Fix? At least add '?
+escapeHTML = concat . map (escapeHTMLChar)
+escapeHTMLChar '&' = "&amp;"
+escapeHTMLChar '<' = "&lt;"
+escapeHTMLChar '>' = "&gt;"
+escapeHTMLChar '"' = "&quot;"
+escapeHTMLChar a = [a] 
+
+unescapeHTML s = replace "&amp;" "&" . replace "&lt;" "<" . replace "&gt;" ">" . replace "&quot;" "\"" 
 
 isClosingTag :: Chunk -> Bool
 isClosingTag t = case t of
@@ -72,6 +117,9 @@ toPlainText t = case t of
   StrongStart -> "*"
   StrongEnd -> "*"
   Plaintext str -> str
+  Image src Nothing Nothing -> "!" ++ src ++ "!"
+  Image src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
+  Image src altMaybe (Just linkUri) -> (toPlainText $ Image src altMaybe Nothing) ++ ":" ++ linkUri
 
 wordBreak = choice [void space, eof]
 
@@ -80,6 +128,25 @@ wordEndTag = do
 
 wordStartTag = do
   choice [emphStart, strongStart, italicStart, boldStart]
+
+imageAlt = do
+  char '('
+  str <- many $ satisfy (\c -> (not $ isSpace c) && (c /= ')'))
+  char ')'
+  return str
+
+imageLink = do
+  char ':'
+  str <- many $ satisfy (not . isSpace)
+  return str
+
+image = do
+  char '!'
+  imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ oneOf "(!")
+  imageAltString <- optionMaybe $ try imageAlt
+  char '!'
+  imageLinkString <- optionMaybe $ try imageLink
+  return $ Image imageSrcStr imageAltString imageLinkString
 
 italicStart = do
   string "__"
@@ -132,7 +199,7 @@ plainWord = do
 
 word = do
   starts <- many $ wordStartTag
-  theWord <- plainWord
+  theWord <- choice [try image, plainWord]
   ends <- many $ wordEndTag
   return (starts ++ [theWord] ++ ends)
 
