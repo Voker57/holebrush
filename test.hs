@@ -270,12 +270,12 @@ widowReaper chunks = let
   widowIds = widowScanner [] $ reverse numberedChunks
   in reverse $ unfoldr (widowFilter) (widowIds, numberedChunks)
 
+sanitize = orphanReaper . widowReaper
+
 main = do
   input <- getContents
   let rl = parse document "(unknown)" $ T.strip $ T.pack input
   print rl
   case rl of
-    Right text -> do
-      let sanitizedText = map (\(Paragraph pieces) -> Paragraph $ orphanReaper $ widowReaper pieces) text
-      putStrLn $ render sanitizedText
+    Right text -> putStrLn $ render text
     Left err -> print err
