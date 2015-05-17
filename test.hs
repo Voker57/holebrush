@@ -41,7 +41,7 @@ instance Renderable Chunk where
   render Whitespace = " "
   render (Image src altMaybe (Just linkUri)) = render $ Link [(Image src altMaybe Nothing)] linkUri Nothing
   render (Image src altMaybe Nothing) = "<img alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
-  render (Link text uri titleMaybe) = "<a href= \"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> "title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
+  render (Link text uri titleMaybe) = "<a href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
 
 instance (Renderable a) => Renderable [a] where
   render xs = concat $ map (render) xs
