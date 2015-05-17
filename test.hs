@@ -36,6 +36,7 @@ data Chunk =
 	| Image String (Maybe String) (Maybe String) 
 	| Whitespace 
 	| Link [Chunk] String (Maybe String)
+	| LineBreak
 	deriving (Eq, Show)
 
 instance Renderable Paragraph where
@@ -55,6 +56,7 @@ instance Renderable Chunk where
 	render (Image src altMaybe (Just linkUri)) = render $ Link [(Image src altMaybe Nothing)] linkUri Nothing
 	render (Image src altMaybe Nothing) = "<img alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
 	render (Link text uri titleMaybe) = "<a href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
+	render LineBreak = "<br />"
 
 instance (Renderable a) => Renderable [a] where
 	render xs = concat $ map (render) xs
@@ -137,6 +139,13 @@ toPlainText t = case t of
 	Image src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
 	Image src altMaybe (Just linkUri) -> (toPlainText $ Image src altMaybe Nothing) ++ ":" ++ linkUri
 	Link text uri titleMaybe -> "\"" ++ concat (map (toPlainText) text) ++ (case titleMaybe of Nothing -> ""; Just title -> "(" ++ title ++ ")") ++  "\":" ++ uri
+	LineBreak -> "\n"
+
+lineBreak = do
+	optionMaybe inlineSpace
+	char '\n'
+	optionMaybe inlineSpace
+	return LineBreak
 
 wordBreak = choice [void space, eof]
 
@@ -152,8 +161,6 @@ nonlinkWordEndTag = (<?> "nonlink word end tag") $ do
 
 wordStartTag = (<?> "word start tag") $ do
 	choice [try italicStart, try boldStart, emphStart, strongStart]
-
-parText = (word `sepBy` whitespace)
 
 linkEnd = (choice [voidTry wordEndTag, void space, eof, try paragraphBreak])
 
@@ -179,7 +186,7 @@ link = do
 	uri <- linkUriPart
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
-		(s, Just w) -> s ++ [w] 
+		(s, Just w) -> s ++ w 
 	return $ Link (sanitize $ concat $ map (tupleFunc) textTuples) uri titleString
 
 linkTitlePart = do
@@ -247,10 +254,11 @@ boldEnd = do
 	string "__"
 	return BoldEnd
 
-whitespace = do
-	sc <- space
-	scs <- manyTill space (lookAhead $ choice [voidTry $ do {string "\n\n"; return ()}, eof, void $ satisfy (not . isSpace)])
+inlineSpace = do
+	many1 $ satisfy (\c -> isSpace c && c /= '\n')
 	return Whitespace
+
+whitespace = manyTill (choice [try lineBreak, inlineSpace]) (lookAhead $ choice [void $ satisfy (not . isSpace), voidTry $ string "\n\n", eof])
 
 plainWord = do
 	sc <- satisfy (not . isSpace)
@@ -287,10 +295,22 @@ document = do
 	return paragraphs
 
 paragraphBreak = do
+	optionMaybe whitespace
 	string "\n\n"
+	optionMaybe whitespace
 	return ()
 
-paragraph = word `sepBy` whitespace >>= (return . Paragraph . intercalate [Whitespace])
+wordAndSpace = do
+	wrd <- word
+	spc <- optionMaybe whitespace
+	return (wrd, spc)
+
+paragraph = do
+	wordsSpaces <- many wordAndSpace
+	let tupleFunc a = case a of
+		(s, Nothing) -> s
+		(s, Just w) -> s ++ w
+	return $ Paragraph $ concat $ map (tupleFunc) wordsSpaces
 
 findOpeningTag' :: [Chunk] -> Integer -> [Chunk] -> Chunk -> Maybe [Chunk]
 findOpeningTag' processedChunks skip [] tag = Nothing
