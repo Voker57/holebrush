@@ -213,7 +213,7 @@ paragraphBreak = do
   string "\n\n"
   return ()
 
-paragraph = (word `sepBy` whitespace) >>= (return . Paragraph . intercalate [Whitespace])
+paragraph = word `sepBy` whitespace >>= (return . Paragraph . intercalate [Whitespace])
 
 findOpeningTag' :: [Chunk] -> Integer -> [Chunk] -> Chunk -> Maybe [Chunk]
 findOpeningTag' processedChunks skip [] tag = Nothing
