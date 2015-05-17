@@ -23,7 +23,7 @@ class Renderable a where
 
 data Paragraph = Paragraph [Chunk] deriving (Show, Eq)
 
-data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Image String (Maybe String) (Maybe String) | Whitespace | Link String [Chunk] deriving (Eq, Show)
+data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Image String (Maybe String) (Maybe String) | Whitespace | Link [Chunk] String (Maybe String) deriving (Eq, Show)
 
 instance Renderable Paragraph where
   render (Paragraph chunks) = "<p>" ++ (concat $ map (render) chunks) ++ "</p>"
@@ -39,9 +39,9 @@ instance Renderable Chunk where
   render EmphEnd = "</em>"
   render (Plaintext s) = s
   render Whitespace = " "
-  render (Image src altMaybe (Just linkUri)) = render $ Link linkUri [(Image src altMaybe Nothing)]
+  render (Image src altMaybe (Just linkUri)) = render $ Link [(Image src altMaybe Nothing)] linkUri Nothing
   render (Image src altMaybe Nothing) = "<img alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
-  render (Link _ _) = undefined
+  render (Link text uri titleMaybe) = "<a href= \"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> "title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
 
 instance (Renderable a) => Renderable [a] where
   render xs = concat $ map (render) xs
@@ -106,6 +106,7 @@ closingTag t = case t of
   StrongStart -> Just StrongEnd
   _ -> Nothing
 
+
 toPlainText :: Chunk -> String
 toPlainText t = case t of
   ItalicStart -> "__"
@@ -120,6 +121,7 @@ toPlainText t = case t of
   Image src Nothing Nothing -> "!" ++ src ++ "!"
   Image src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
   Image src altMaybe (Just linkUri) -> (toPlainText $ Image src altMaybe Nothing) ++ ":" ++ linkUri
+  Link text uri titleMaybe -> "\"" ++ concat (map (toPlainText) text) ++ (case titleMaybe of Nothing -> ""; Just title -> "(" ++ title ++ ")") ++  "\":" ++ uri
 
 wordBreak = choice [void space, eof]
 
@@ -129,10 +131,47 @@ wordEndTag = (<?> "word end tag") $ do
 wordStartTag = (<?> "word start tag") $ do
   choice [italicStart, boldStart, emphStart, strongStart]
 
-imageAlt = do
+parText = (word `sepBy` whitespace)
+
+linkEnd = (choice [try wordEndTag >> return (), space >> return (), eof, try paragraphBreak])
+
+trailingPunctuation = do
+  punctChar <- satisfy (isPunctuation)
+  punctChars <- manyTill (satisfy (isPunctuation)) (lookAhead linkEnd)
+  return $ Plaintext (punctChar:punctChars)
+
+nonlinkWordAndSpace = do
+	wrd <- nonlinkWord
+	spc <- optionMaybe whitespace
+	return (wrd, spc)
+
+linkUriPart = do
+	string "\":"
+	uri <- manyTill (satisfy (not . isSpace)) $ lookAhead $ choice [try $ void trailingPunctuation, try $ void linkEnd]
+	return uri
+
+link = do
+	char '"'
+	textTuples <- manyTill nonlinkWordAndSpace (lookAhead $ choice [try $ void $ linkTitlePart, try $ void linkUriPart]) 
+	titleString <- optionMaybe $ try linkTitlePart
+	uri <- linkUriPart
+	let tupleFunc a = case a of
+		(s, Nothing) -> s
+		(s, Just w) -> s ++ [w] 
+	return $ Link (sanitize $ concat $ map (tupleFunc) textTuples) uri titleString
+
+linkTitlePart = do
   char '('
-  str <- many $ satisfy (\c -> (not $ isSpace c) && (c /= ')'))
+  str <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ try $ do { char ')'; linkUriPart })
   char ')'
+  lookAhead linkUriPart
+  return str
+
+imageTitlePart = do
+  char '('
+  str <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ try $ do { char ')'; imageEndingBang})
+  char ')'
+  lookAhead imageEndingBang
   return str
 
 imageLink = do
@@ -140,13 +179,15 @@ imageLink = do
   str <- many $ satisfy (not . isSpace)
   return str
 
+imageEndingBang = char '!' >> choice [try $ void imageLink, try $ void trailingPunctuation, try $ void wordEndTag, wordBreak]
+
 image = do
-  char '!'
-  imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ oneOf "(!")
-  imageAltString <- optionMaybe $ try imageAlt
-  char '!'
-  imageLinkString <- optionMaybe $ try imageLink
-  return $ Image imageSrcStr imageAltString imageLinkString
+	char '!'
+	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ ((choice [try $ void imageEndingBang, try $ ((void imageTitlePart) >> (void imageEndingBang))]) >> (optionMaybe $ try $ void imageLink)))
+	imageAltString <- optionMaybe $ try imageTitlePart
+	char '!'
+	imageLinkString <- optionMaybe $ try imageLink
+	return $ Image imageSrcStr imageAltString imageLinkString
 
 italicStart = do
   string "__"
@@ -189,19 +230,37 @@ boldEnd = do
   return BoldEnd
 
 whitespace = do
+  sc <- space
   scs <- manyTill space (lookAhead $ try $ choice [string "\n\n" >> return (), eof, satisfy (not . isSpace) >> return ()])
   return Whitespace
 
 plainWord = do
   sc <- satisfy (not . isSpace)
-  scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [wordEndTag >> return (), space >> return (), eof, paragraphBreak])
+  scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [wordEndTag >> return (), space >> return (), eof, paragraphBreak, void $ char '"'])
   return (Plaintext (sc:scs))
+
+nonlinkPlainWord = do
+  let wordChar = satisfy (\c -> not (isSpace c) && not (c == '"'))
+  sc <- wordChar
+  scs <- manyTill wordChar (lookAhead $ choice [void $ try wordEndTag, void space, eof, paragraphBreak, void $ try linkTitlePart, void $ try linkUriPart])
+  return (Plaintext (sc:scs))
+
+nonlinkWord = do
+  starts <- many $ wordStartTag
+  wPiece <- nonlinkWordPiece
+  wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, void $ try wordEndTag, void $ try linkTitlePart, void $ try linkUriPart])
+  ends <- many $ wordEndTag
+  return (starts ++ wPiece:wordPieces ++ ends)
+
+nonlinkWordPiece = (choice [try image, try trailingPunctuation, try nonlinkPlainWord]) 
+wordPiece = (choice [try image, try link, try trailingPunctuation, try plainWord]) 
 
 word = do
   starts <- many $ wordStartTag
-  theWord <- choice [try image, plainWord]
+  wPiece <- wordPiece
+  wordPieces <- manyTill wordPiece (lookAhead $ choice [wordBreak, try $ void wordEndTag])
   ends <- many $ wordEndTag
-  return (starts ++ [theWord] ++ ends)
+  return (starts ++ wPiece:wordPieces ++ ends)
 
 document = do
   option () $ void whitespace
