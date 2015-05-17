@@ -123,11 +123,11 @@ toPlainText t = case t of
 
 wordBreak = choice [void space, eof]
 
-wordEndTag = do
-  choice [emphEnd, strongEnd, italicEnd, boldEnd]
+wordEndTag = (<?> "word end tag") $ do
+  choice [italicEnd, boldEnd, emphEnd, strongEnd]
 
-wordStartTag = do
-  choice [emphStart, strongStart, italicStart, boldStart]
+wordStartTag = (<?> "word start tag") $ do
+  choice [italicStart, boldStart, emphStart, strongStart]
 
 imageAlt = do
   char '('
