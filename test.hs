@@ -23,7 +23,20 @@ class Renderable a where
 
 data Paragraph = Paragraph [Chunk] deriving (Show, Eq)
 
-data Chunk = StrongStart | StrongEnd | EmphStart | EmphEnd | ItalicStart | ItalicEnd | BoldStart | BoldEnd | Plaintext String | Image String (Maybe String) (Maybe String) | Whitespace | Link [Chunk] String (Maybe String) deriving (Eq, Show)
+data Chunk = 
+	StrongStart
+	| StrongEnd 
+	| EmphStart 
+	| EmphEnd 
+	| ItalicStart 
+	| ItalicEnd 
+	| BoldStart 
+	| BoldEnd 
+	| Plaintext String 
+	| Image String (Maybe String) (Maybe String) 
+	| Whitespace 
+	| Link [Chunk] String (Maybe String)
+	deriving (Eq, Show)
 
 instance Renderable Paragraph where
 	render (Paragraph chunks) = "<p>" ++ (concat $ map (render) chunks) ++ "</p>"
@@ -46,15 +59,17 @@ instance Renderable Chunk where
 instance (Renderable a) => Renderable [a] where
 	render xs = concat $ map (render) xs
 
+voidTry = void . try
+
 -- Stolen shit
 spanList :: ([a] -> Bool) -> [a] -> ([a], [a])
 
 spanList _ [] = ([],[])
 spanList func list@(x:xs) =
-		if func list
-			then (x:ys,zs)
-			else ([],list)
-		where (ys,zs) = spanList func xs
+	if func list
+		then (x:ys,zs)
+		else ([],list)
+	where (ys,zs) = spanList func xs
 
 joinLists :: [a] -> [[a]] -> [a]
 joinLists delim l = concat (intersperse delim l)
@@ -65,14 +80,14 @@ breakList func = spanList (not . func)
 split :: Eq a => [a] -> [a] -> [[a]]
 split _ [] = []
 split delim str =
-		let (firstline, remainder) = breakList (isPrefixOf delim) str
-				in 
-				firstline : case remainder of
-																	[] -> []
-																	x -> if x == delim
-																				then [] : []
-																				else split delim 
-																								(drop (length delim) x)
+	let (firstline, remainder) = breakList (isPrefixOf delim) str
+		in 
+		firstline : case remainder of
+			[] -> []
+			x -> if x == delim
+				then [] : []
+				else split delim 
+					(drop (length delim) x)
 
 replace :: Eq a => [a] -> [a] -> [a] -> [a]
 replace old new l = joinLists new . split old $ l
@@ -133,7 +148,7 @@ wordStartTag = (<?> "word start tag") $ do
 
 parText = (word `sepBy` whitespace)
 
-linkEnd = (choice [try wordEndTag >> return (), space >> return (), eof, try paragraphBreak])
+linkEnd = (choice [voidTry wordEndTag, void space, eof, try paragraphBreak])
 
 trailingPunctuation = do
 	punctChar <- satisfy (isPunctuation)
@@ -147,12 +162,12 @@ nonlinkWordAndSpace = do
 
 linkUriPart = do
 	string "\":"
-	uri <- manyTill (satisfy (not . isSpace)) $ lookAhead $ choice [try $ void trailingPunctuation, try $ void linkEnd]
+	uri <- manyTill (satisfy (not . isSpace)) $ lookAhead $ choice [voidTry trailingPunctuation, voidTry linkEnd]
 	return uri
 
 link = do
 	char '"'
-	textTuples <- manyTill nonlinkWordAndSpace (lookAhead $ choice [try $ void $ linkTitlePart, try $ void linkUriPart]) 
+	textTuples <- manyTill nonlinkWordAndSpace (lookAhead $ choice [voidTry linkTitlePart, voidTry linkUriPart]) 
 	titleString <- optionMaybe $ try linkTitlePart
 	uri <- linkUriPart
 	let tupleFunc a = case a of
@@ -179,11 +194,11 @@ imageLink = do
 	str <- many $ satisfy (not . isSpace)
 	return str
 
-imageEndingBang = char '!' >> choice [try $ void imageLink, try $ void trailingPunctuation, try $ void wordEndTag, wordBreak]
+imageEndingBang = char '!' >> choice [voidTry imageLink, voidTry trailingPunctuation, voidTry wordEndTag, wordBreak]
 
 image = do
 	char '!'
-	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ ((choice [try $ void imageEndingBang, try $ ((void imageTitlePart) >> (void imageEndingBang))]) >> (optionMaybe $ try $ void imageLink)))
+	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; optionMaybe $ voidTry imageLink})
 	imageAltString <- optionMaybe $ try imageTitlePart
 	char '!'
 	imageLinkString <- optionMaybe $ try imageLink
@@ -231,24 +246,24 @@ boldEnd = do
 
 whitespace = do
 	sc <- space
-	scs <- manyTill space (lookAhead $ try $ choice [string "\n\n" >> return (), eof, satisfy (not . isSpace) >> return ()])
+	scs <- manyTill space (lookAhead $ choice [voidTry $ do {string "\n\n"; return ()}, eof, void $ satisfy (not . isSpace)])
 	return Whitespace
 
 plainWord = do
 	sc <- satisfy (not . isSpace)
-	scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ try $ choice [wordEndTag >> return (), space >> return (), eof, paragraphBreak, void $ char '"'])
+	scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ choice [voidTry wordEndTag, void space, eof, voidTry paragraphBreak, void $ char '"'])
 	return (Plaintext (sc:scs))
 
 nonlinkPlainWord = do
 	let wordChar = satisfy (\c -> not (isSpace c) && not (c == '"'))
 	sc <- wordChar
-	scs <- manyTill wordChar (lookAhead $ choice [void $ try wordEndTag, void space, eof, paragraphBreak, void $ try linkTitlePart, void $ try linkUriPart])
+	scs <- manyTill wordChar (lookAhead $ choice [voidTry wordEndTag, void space, eof, voidTry paragraphBreak, voidTry linkTitlePart, voidTry linkUriPart])
 	return (Plaintext (sc:scs))
 
 nonlinkWord = do
 	starts <- many $ wordStartTag
 	wPiece <- nonlinkWordPiece
-	wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, void $ try wordEndTag, void $ try linkTitlePart, void $ try linkUriPart])
+	wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, voidTry wordEndTag, voidTry linkTitlePart, voidTry linkUriPart])
 	ends <- many $ wordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
@@ -258,7 +273,7 @@ wordPiece = (choice [try image, try link, try trailingPunctuation, try plainWord
 word = do
 	starts <- many $ wordStartTag
 	wPiece <- wordPiece
-	wordPieces <- manyTill wordPiece (lookAhead $ choice [wordBreak, try $ void wordEndTag])
+	wordPieces <- manyTill wordPiece (lookAhead $ choice [wordBreak, voidTry wordEndTag])
 	ends <- many $ wordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
@@ -333,7 +348,7 @@ sanitize = orphanReaper . widowReaper
 
 main = do
 	input <- getContents
-	let rl = parse document "(unknown)" $ T.strip $ T.pack input
+	let rl = parse document "stdio" $ T.strip $ T.pack input
 	print rl
 	case rl of
 		Right text -> putStrLn $ render text
