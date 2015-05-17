@@ -141,10 +141,17 @@ toPlainText t = case t of
 wordBreak = choice [void space, eof]
 
 wordEndTag = (<?> "word end tag") $ do
-	choice [italicEnd, boldEnd, emphEnd, strongEnd]
+	wet <- choice [try italicEnd, try boldEnd, emphEnd, strongEnd]
+	lookAhead $ choice [voidTry wordEndTag, void space, eof]
+	return wet
+
+nonlinkWordEndTag = (<?> "nonlink word end tag") $ do
+	wet <- choice [try italicEnd, try boldEnd, emphEnd, strongEnd]
+	lookAhead $ choice [voidTry nonlinkWordEndTag, voidTry linkTitlePart, void space, eof]
+	return wet
 
 wordStartTag = (<?> "word start tag") $ do
-	choice [italicStart, boldStart, emphStart, strongStart]
+	choice [try italicStart, try boldStart, emphStart, strongStart]
 
 parText = (word `sepBy` whitespace)
 
@@ -226,22 +233,18 @@ strongStart = do
 
 emphEnd = do
 	char '_'
-	lookAhead $ try (choice [void wordEndTag, void space, eof])
 	return EmphEnd
 
 strongEnd = do
 	char '*'
-	lookAhead $ try (choice [void wordEndTag, void space, eof])
 	return StrongEnd
 
 italicEnd = do
 	string "__"
-	lookAhead $ try (choice [void wordEndTag, void space, eof])
 	return ItalicEnd
 
 boldEnd = do
 	string "__"
-	lookAhead $ try (choice [void wordEndTag, void space, eof])
 	return BoldEnd
 
 whitespace = do
@@ -257,14 +260,14 @@ plainWord = do
 nonlinkPlainWord = do
 	let wordChar = satisfy (\c -> not (isSpace c) && not (c == '"'))
 	sc <- wordChar
-	scs <- manyTill wordChar (lookAhead $ choice [voidTry wordEndTag, void space, eof, voidTry paragraphBreak, voidTry linkTitlePart, voidTry linkUriPart])
+	scs <- manyTill wordChar (lookAhead $ choice [voidTry nonlinkWordEndTag, void space, eof, voidTry paragraphBreak, voidTry linkTitlePart, voidTry linkUriPart])
 	return (Plaintext (sc:scs))
 
 nonlinkWord = do
 	starts <- many $ wordStartTag
 	wPiece <- nonlinkWordPiece
-	wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, voidTry wordEndTag, voidTry linkTitlePart, voidTry linkUriPart])
-	ends <- many $ wordEndTag
+	wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, voidTry nonlinkWordEndTag, voidTry linkTitlePart, voidTry linkUriPart])
+	ends <- many $ nonlinkWordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
 nonlinkWordPiece = (choice [try image, try trailingPunctuation, try nonlinkPlainWord]) 
