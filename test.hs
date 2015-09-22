@@ -449,5 +449,7 @@ main = do
 	let rl = parse document "stdio" $ T.strip $ T.pack input
 	print rl
 	case rl of
-		Right text -> putStrLn $ render text
+		Right text -> do
+			let sanitizedText = map (\(Paragraph c pieces) -> Paragraph c $ orphanReaper $ widowReaper pieces) text
+			putStrLn $ render sanitizedText
 		Left err -> print err
