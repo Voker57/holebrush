@@ -17,45 +17,66 @@ import Text.Parsec.Combinator
 import Data.List
 import qualified Data.Text as T
 import Control.Monad
+import Text.Printf
 
 class Renderable a where
 	render :: a -> String
 
-data Paragraph = Paragraph [Chunk] deriving (Show, Eq)
+data Paragraph = Paragraph CssSpec [Chunk] deriving (Show, Eq)
+
+data CssSpec = CssSpec
+	(Maybe String) -- ID
+	(Maybe String) -- Class
+	(Maybe String) -- Language
+	(Maybe String) -- Style
+	deriving (Show, Eq)
+
+emptyCssSpec = CssSpec Nothing Nothing Nothing Nothing
 
 data Chunk = 
-	StrongStart
-	| StrongEnd 
-	| EmphStart 
-	| EmphEnd 
-	| ItalicStart 
+	StrongStart CssSpec
+	| StrongEnd
+	| EmphStart CssSpec
+	| EmphEnd
+	| ItalicStart CssSpec
 	| ItalicEnd 
-	| BoldStart 
-	| BoldEnd 
+	| BoldStart CssSpec 
+	| BoldEnd
 	| Plaintext String 
-	| Image String (Maybe String) (Maybe String) 
+	| Image CssSpec String (Maybe String) (Maybe String) 
 	| Whitespace 
-	| Link [Chunk] String (Maybe String)
+	| Link CssSpec [Chunk] String (Maybe String)
 	| LineBreak
+	| SubStart CssSpec
+	| SubEnd
+	| SuperStart CssSpec
+	| SuperEnd
+	| InsStart CssSpec
+	| InsEnd
+	| DelStart CssSpec
+	| DelEnd
 	deriving (Eq, Show)
 
+instance Renderable CssSpec where
+	render (CssSpec mId mClass mLang mStyle) = concat [maybe "" (printf " id=\"%s\"") mId, maybe "" (printf " class=\"%s\"") mClass, maybe "" (printf " lang=\"%s\"") mLang, maybe "" (printf " style=\"%s\"") mStyle]
+
 instance Renderable Paragraph where
-	render (Paragraph chunks) = "<p>" ++ (concat $ map (render) chunks) ++ "</p>"
+	render (Paragraph spec chunks) = "<p" ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</p>"
 
 instance Renderable Chunk where
-	render ItalicStart = "<i>"
+	render (ItalicStart spec) = "<i" ++ render spec ++ ">"
 	render ItalicEnd = "</i>"
-	render BoldStart = "<b>"
+	render (BoldStart spec) = "<b" ++ render spec ++ ">"
 	render BoldEnd = "</b>"
-	render StrongStart = "<strong>"
+	render (StrongStart spec) = "<strong" ++ render spec ++ ">"
 	render StrongEnd = "</strong>"
-	render EmphStart = "<em>"
+	render (EmphStart spec) = "<em" ++ render spec ++ ">"
 	render EmphEnd = "</em>"
 	render (Plaintext s) = s
 	render Whitespace = " "
-	render (Image src altMaybe (Just linkUri)) = render $ Link [(Image src altMaybe Nothing)] linkUri Nothing
-	render (Image src altMaybe Nothing) = "<img alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
-	render (Link text uri titleMaybe) = "<a href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
+	render (Image spec src altMaybe (Just linkUri)) = render $ Link emptyCssSpec [(Image spec src altMaybe Nothing)] linkUri Nothing
+	render (Image spec src altMaybe Nothing) = "<img" ++ render spec ++ " alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
+	render (Link spec text uri titleMaybe) = "<a" ++ render spec ++ " href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
 	render LineBreak = "<br />"
 
 instance (Renderable a) => Renderable [a] where
@@ -117,29 +138,76 @@ isOpeningTag = isJust . closingTag
 
 closingTag :: Chunk -> Maybe Chunk
 closingTag t = case t of
-	ItalicStart -> Just ItalicEnd
-	BoldStart -> Just BoldEnd
-	EmphStart -> Just EmphEnd
-	StrongStart -> Just StrongEnd
+	ItalicStart _ -> Just ItalicEnd
+	BoldStart _ -> Just BoldEnd
+	EmphStart _ -> Just EmphEnd
+	StrongStart _ -> Just StrongEnd
 	_ -> Nothing
 
 
+-- TODO: throw this out
 toPlainText :: Chunk -> String
 toPlainText t = case t of
-	ItalicStart -> "__"
+	ItalicStart _ -> "__"
 	ItalicEnd -> "__"
-	EmphStart -> "_"
+	EmphStart _ -> "_"
 	EmphEnd -> "_"
-	BoldStart -> "**"
+	BoldStart _ -> "**"
 	BoldEnd -> "**"
-	StrongStart -> "*"
+	StrongStart _ -> "*"
 	StrongEnd -> "*"
 	Plaintext str -> str
-	Image src Nothing Nothing -> "!" ++ src ++ "!"
-	Image src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
-	Image src altMaybe (Just linkUri) -> (toPlainText $ Image src altMaybe Nothing) ++ ":" ++ linkUri
-	Link text uri titleMaybe -> "\"" ++ concat (map (toPlainText) text) ++ (case titleMaybe of Nothing -> ""; Just title -> "(" ++ title ++ ")") ++  "\":" ++ uri
+	Image _ src Nothing Nothing -> "!" ++ src ++ "!"
+	Image _ src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
+	Image _ src altMaybe (Just linkUri) -> (toPlainText $ Image undefined src altMaybe Nothing) ++ ":" ++ linkUri
+	Link _ text uri titleMaybe -> "\"" ++ concat (map (toPlainText) text) ++ (case titleMaybe of Nothing -> ""; Just title -> "(" ++ title ++ ")") ++  "\":" ++ uri
 	LineBreak -> "\n"
+
+-- parsers
+
+specAssembler (CssSpec mId mClass mLang mStyle) (("id", nId):specs) = specAssembler (CssSpec (Just nId) mClass mLang mStyle) specs
+specAssembler (CssSpec mId (Just tClass) mLang mStyle) (("class", nClass):specs) = specAssembler (CssSpec mId (Just $ intercalate " " [tClass, nClass]) mLang mStyle) specs
+specAssembler (CssSpec mId mClass mLang (Just tStyle)) (("style", nStyle):specs) = specAssembler (CssSpec mId mClass mLang (Just $ intercalate ";" [tStyle, nStyle])) specs
+specAssembler (CssSpec mId Nothing mLang mStyle) (("class", nClass):specs) = specAssembler (CssSpec mId (Just nClass) mLang mStyle) specs
+specAssembler (CssSpec mId mClass mLang Nothing) (("style", nStyle):specs) = specAssembler (CssSpec mId mClass mLang (Just nStyle)) specs
+specAssembler (CssSpec mId mClass mLang mStyle) (("language", nLang):specs) = specAssembler (CssSpec mId mClass (Just nLang) mStyle) specs
+specAssembler s (x:xs) = specAssembler s xs
+specAssembler s [] = s
+
+cssSpec = do
+	rawSpecs <- many $ choice [try classIdSpec, try languageSpec, try cssStyleSpec]
+	return $ specAssembler (CssSpec Nothing Nothing Nothing Nothing) $ concat rawSpecs
+
+many1Till p end = do
+	notFollowedBy end
+	first <- p
+	rest <- manyTill p end
+	return (first:rest)
+
+idSpec = do
+	char '#'
+	many1Till (satisfy (not . isSpace)) (lookAhead $ char ')')
+
+cssClassSpec = do
+	many1Till (noneOf "\n") (lookAhead $ choice [string ")", idSpec])
+
+classIdSpec = do
+	char '('
+	certainlyClassSpec <- cssClassSpec
+	maybeIdSpec <- optionMaybe $ try idSpec
+	char ')'
+	return $ (maybe [] (\a -> [("id", a)]) maybeIdSpec) ++ [("class", certainlyClassSpec)]
+
+cssStyleSpec = do
+	char '{'
+	spec <- many1Till (noneOf "\n")  (char '}')
+	return [("style", spec)]
+
+-- This should be valid bcp47 language tag, but fuck this spec, let document author ensure that.
+languageSpec = do
+	char '['
+	spec <- many1Till (satisfy ((\a -> (isAlphaNum a) || (a == '-')))) (char ']')
+	return [("language", spec)]
 
 lineBreak = do
 	optionMaybe inlineSpace
@@ -181,13 +249,14 @@ linkUriPart = do
 
 link = do
 	char '"'
+	cssSpecV <- cssSpec
 	textTuples <- manyTill nonlinkWordAndSpace (lookAhead $ choice [voidTry linkTitlePart, voidTry linkUriPart]) 
 	titleString <- optionMaybe $ try linkTitlePart
 	uri <- linkUriPart
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
 		(s, Just w) -> s ++ w 
-	return $ Link (sanitize $ concat $ map (tupleFunc) textTuples) uri titleString
+	return $ Link cssSpecV (sanitize $ concat $ map (tupleFunc) textTuples) uri titleString
 
 linkTitlePart = do
 	char '('
@@ -212,31 +281,36 @@ imageEndingBang = char '!' >> choice [voidTry imageLink, voidTry trailingPunctua
 
 image = do
 	char '!'
+	cssSpecV <- cssSpec
 	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; optionMaybe $ voidTry imageLink})
 	imageAltString <- optionMaybe $ try imageTitlePart
 	char '!'
 	imageLinkString <- optionMaybe $ try imageLink
-	return $ Image imageSrcStr imageAltString imageLinkString
+	return $ Image cssSpecV imageSrcStr imageAltString imageLinkString
 
 italicStart = do
 	string "__"
+	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return ItalicStart
+	return $ ItalicStart cssSpecV
 
 boldStart = do
 	string "**"
+	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return BoldStart
+	return $ BoldStart cssSpecV
 
 emphStart = do
 	char '_'
+	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return EmphStart
+	return $ EmphStart cssSpecV
 
 strongStart = do
 	char '*'
+	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return StrongStart
+	return $ StrongStart cssSpecV
 
 emphEnd = do
 	char '_'
@@ -306,11 +380,12 @@ wordAndSpace = do
 	return (wrd, spc)
 
 paragraph = do
+	cssSpecV <- cssSpec
 	wordsSpaces <- many wordAndSpace
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
 		(s, Just w) -> s ++ w
-	return $ Paragraph $ concat $ map (tupleFunc) wordsSpaces
+	return $ Paragraph cssSpecV $ concat $ map (tupleFunc) wordsSpaces
 
 findOpeningTag' :: [Chunk] -> Integer -> [Chunk] -> Chunk -> Maybe [Chunk]
 findOpeningTag' processedChunks skip [] tag = Nothing
