@@ -18,6 +18,7 @@ import Data.List
 import qualified Data.Text as T
 import Control.Monad
 import Text.Printf
+import PairedTag
 
 class Renderable a where
 	render :: a -> String
@@ -33,28 +34,15 @@ data CssSpec = CssSpec
 
 emptyCssSpec = CssSpec Nothing Nothing Nothing Nothing
 
-data Chunk = 
-	StrongStart CssSpec
-	| StrongEnd
-	| EmphStart CssSpec
-	| EmphEnd
-	| ItalicStart CssSpec
-	| ItalicEnd 
-	| BoldStart CssSpec 
-	| BoldEnd
+data Chunk =
+	TagStart PairedTag CssSpec
+	| TagEnd PairedTag
 	| Plaintext String 
 	| Image CssSpec String (Maybe String) (Maybe String) 
 	| Whitespace 
 	| Link CssSpec [Chunk] String (Maybe String)
 	| LineBreak
-	| SubStart CssSpec
-	| SubEnd
-	| SuperStart CssSpec
-	| SuperEnd
-	| InsStart CssSpec
-	| InsEnd
-	| DelStart CssSpec
-	| DelEnd
+
 	deriving (Eq, Show)
 
 instance Renderable CssSpec where
@@ -64,14 +52,14 @@ instance Renderable Paragraph where
 	render (Paragraph spec chunks) = "<p" ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</p>"
 
 instance Renderable Chunk where
-	render (ItalicStart spec) = "<i" ++ render spec ++ ">"
-	render ItalicEnd = "</i>"
-	render (BoldStart spec) = "<b" ++ render spec ++ ">"
-	render BoldEnd = "</b>"
-	render (StrongStart spec) = "<strong" ++ render spec ++ ">"
-	render StrongEnd = "</strong>"
-	render (EmphStart spec) = "<em" ++ render spec ++ ">"
-	render EmphEnd = "</em>"
+	render (TagStart Italic spec) = "<i" ++ render spec ++ ">"
+	render (TagEnd Italic) = "</i>"
+	render (TagStart Bold spec) = "<b" ++ render spec ++ ">"
+	render (TagEnd Bold) = "</b>"
+	render (TagStart Strong spec) = "<strong" ++ render spec ++ ">"
+	render (TagEnd Strong) = "</strong>"
+	render (TagStart Emph spec) = "<em" ++ render spec ++ ">"
+	render (TagEnd Emph) = "</em>"
 	render (Plaintext s) = s
 	render Whitespace = " "
 	render (Image spec src altMaybe (Just linkUri)) = render $ Link emptyCssSpec [(Image spec src altMaybe Nothing)] linkUri Nothing
@@ -126,36 +114,28 @@ escapeHTMLChar a = [a]
 unescapeHTML s = replace "&amp;" "&" . replace "&lt;" "<" . replace "&gt;" ">" . replace "&quot;" "\"" 
 
 isClosingTag :: Chunk -> Bool
-isClosingTag t = case t of
-	ItalicEnd -> True
-	BoldEnd -> True
-	StrongEnd -> True
-	EmphEnd -> True
-	_ -> False
+isClosingTag (TagEnd _) = True
+isClosingTag _ = False
 
 isOpeningTag :: Chunk -> Bool
 isOpeningTag = isJust . closingTag
 
 closingTag :: Chunk -> Maybe Chunk
-closingTag t = case t of
-	ItalicStart _ -> Just ItalicEnd
-	BoldStart _ -> Just BoldEnd
-	EmphStart _ -> Just EmphEnd
-	StrongStart _ -> Just StrongEnd
-	_ -> Nothing
-
+closingTag (TagStart t _) = Just (TagEnd t)
+closingTag _ = Nothing
 
 -- TODO: throw this out
+-- It also doesn't reproduce CSS tags
 toPlainText :: Chunk -> String
 toPlainText t = case t of
-	ItalicStart _ -> "__"
-	ItalicEnd -> "__"
-	EmphStart _ -> "_"
-	EmphEnd -> "_"
-	BoldStart _ -> "**"
-	BoldEnd -> "**"
-	StrongStart _ -> "*"
-	StrongEnd -> "*"
+	TagStart Italic _ -> "__"
+	TagEnd Italic -> "__"
+	TagStart Emph _ -> "_"
+	TagEnd Emph -> "_"
+	TagStart Bold _ -> "**"
+	TagEnd Bold -> "**"
+	TagStart Strong _ -> "*"
+	TagEnd Strong -> "*"
 	Plaintext str -> str
 	Image _ src Nothing Nothing -> "!" ++ src ++ "!"
 	Image _ src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
@@ -292,41 +272,41 @@ italicStart = do
 	string "__"
 	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return $ ItalicStart cssSpecV
+	return $ TagStart Italic cssSpecV
 
 boldStart = do
 	string "**"
 	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return $ BoldStart cssSpecV
+	return $ TagStart Bold cssSpecV
 
 emphStart = do
 	char '_'
 	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return $ EmphStart cssSpecV
+	return $ TagStart Emph cssSpecV
 
 strongStart = do
 	char '*'
 	cssSpecV <- cssSpec
 	notFollowedBy wordBreak
-	return $ StrongStart cssSpecV
+	return $ TagStart Strong cssSpecV
 
 emphEnd = do
 	char '_'
-	return EmphEnd
+	return $ TagEnd Emph
 
 strongEnd = do
 	char '*'
-	return StrongEnd
+	return $ TagEnd Strong
 
 italicEnd = do
 	string "__"
-	return ItalicEnd
+	return $ TagEnd Italic
 
 boldEnd = do
 	string "__"
-	return BoldEnd
+	return $ TagEnd Bold
 
 inlineSpace = do
 	many1 $ satisfy (\c -> isSpace c && c /= '\n')
