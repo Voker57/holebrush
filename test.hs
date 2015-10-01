@@ -35,8 +35,8 @@ data CssSpec = CssSpec
 emptyCssSpec = CssSpec Nothing Nothing Nothing Nothing
 
 data Chunk =
-	TagStart PairedTag CssSpec
-	| TagEnd PairedTag
+	TagStart String PairedTag CssSpec
+	| TagEnd String PairedTag
 	| Plaintext String 
 	| Image CssSpec String (Maybe String) (Maybe String) 
 	| Whitespace 
@@ -52,14 +52,14 @@ instance Renderable Paragraph where
 	render (Paragraph spec chunks) = "<p" ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</p>"
 
 instance Renderable Chunk where
-	render (TagStart Italic spec) = "<i" ++ render spec ++ ">"
-	render (TagEnd Italic) = "</i>"
-	render (TagStart Bold spec) = "<b" ++ render spec ++ ">"
-	render (TagEnd Bold) = "</b>"
-	render (TagStart Strong spec) = "<strong" ++ render spec ++ ">"
-	render (TagEnd Strong) = "</strong>"
-	render (TagStart Emph spec) = "<em" ++ render spec ++ ">"
-	render (TagEnd Emph) = "</em>"
+	render (TagStart _ Italic spec) = "<i" ++ render spec ++ ">"
+	render (TagEnd _ Italic) = "</i>"
+	render (TagStart _ Bold spec) = "<b" ++ render spec ++ ">"
+	render (TagEnd _ Bold) = "</b>"
+	render (TagStart _ Strong spec) = "<strong" ++ render spec ++ ">"
+	render (TagEnd _ Strong) = "</strong>"
+	render (TagStart _ Emph spec) = "<em" ++ render spec ++ ">"
+	render (TagEnd _ Emph) = "</em>"
 	render (Plaintext s) = s
 	render Whitespace = " "
 	render (Image spec src altMaybe (Just linkUri)) = render $ Link emptyCssSpec [(Image spec src altMaybe Nothing)] linkUri Nothing
@@ -114,49 +114,38 @@ escapeHTMLChar a = [a]
 unescapeHTML s = replace "&amp;" "&" . replace "&lt;" "<" . replace "&gt;" ">" . replace "&quot;" "\"" 
 
 isClosingTag :: Chunk -> Bool
-isClosingTag (TagEnd _) = True
+isClosingTag (TagEnd _ _) = True
 isClosingTag _ = False
 
 isOpeningTag :: Chunk -> Bool
-isOpeningTag = isJust . closingTag
+isOpeningTag (TagStart _ _ _) = True
+isOpeningTag _ = False
 
-closingTag :: Chunk -> Maybe Chunk
-closingTag (TagStart t _) = Just (TagEnd t)
-closingTag _ = Nothing
+doesClose :: Chunk -> Chunk -> Bool
+doesClose (TagStart _ t _) (TagEnd _ t2) = t == t2
+doesClose _ _ = False
 
--- TODO: throw this out
--- It also doesn't reproduce CSS tags
 toPlainText :: Chunk -> String
 toPlainText t = case t of
-	TagStart Italic _ -> "__"
-	TagEnd Italic -> "__"
-	TagStart Emph _ -> "_"
-	TagEnd Emph -> "_"
-	TagStart Bold _ -> "**"
-	TagEnd Bold -> "**"
-	TagStart Strong _ -> "*"
-	TagEnd Strong -> "*"
-	Plaintext str -> str
-	Image _ src Nothing Nothing -> "!" ++ src ++ "!"
-	Image _ src (Just altText) Nothing -> "!" ++ src ++ "(" ++ altText ++ ")!"
-	Image _ src altMaybe (Just linkUri) -> (toPlainText $ Image undefined src altMaybe Nothing) ++ ":" ++ linkUri
-	Link _ text uri titleMaybe -> "\"" ++ concat (map (toPlainText) text) ++ (case titleMaybe of Nothing -> ""; Just title -> "(" ++ title ++ ")") ++  "\":" ++ uri
-	LineBreak -> "\n"
+	TagStart originalText _ _ -> originalText
+	TagEnd originalText _ -> originalText
+	_ -> error "toPlainText called on non-lexem"
 
 -- parsers
+specAssembler (CssSpec mId mClass mLang mStyle) (("id", nId, textData):specs) restText = specAssembler (CssSpec (Just nId) mClass mLang mStyle) specs (textData ++ restText)
+specAssembler (CssSpec mId (Just tClass) mLang mStyle) (("class", nClass, textData):specs) restText = specAssembler (CssSpec mId (Just $ intercalate " " [tClass, nClass]) mLang mStyle) specs (textData ++ restText)
+specAssembler (CssSpec mId mClass mLang (Just tStyle)) (("style", nStyle, textData):specs) restText = specAssembler (CssSpec mId mClass mLang (Just $ intercalate ";" [tStyle, nStyle])) specs (textData ++ restText)
+specAssembler (CssSpec mId Nothing mLang mStyle) (("class", nClass, textData):specs) restText = specAssembler (CssSpec mId (Just nClass) mLang mStyle) specs (textData ++ restText)
+specAssembler (CssSpec mId mClass mLang Nothing) (("style", nStyle, textData):specs) restText = specAssembler (CssSpec mId mClass mLang (Just nStyle)) specs (textData ++ restText)
+specAssembler (CssSpec mId mClass mLang mStyle) (("language", nLang, textData):specs) restText = specAssembler (CssSpec mId mClass (Just nLang) mStyle) specs (textData ++ restText)
+specAssembler s ((_, _, textData):xs) restText = specAssembler s xs (textData ++ restText)
+specAssembler s [] restText = (s, restText)
 
-specAssembler (CssSpec mId mClass mLang mStyle) (("id", nId):specs) = specAssembler (CssSpec (Just nId) mClass mLang mStyle) specs
-specAssembler (CssSpec mId (Just tClass) mLang mStyle) (("class", nClass):specs) = specAssembler (CssSpec mId (Just $ intercalate " " [tClass, nClass]) mLang mStyle) specs
-specAssembler (CssSpec mId mClass mLang (Just tStyle)) (("style", nStyle):specs) = specAssembler (CssSpec mId mClass mLang (Just $ intercalate ";" [tStyle, nStyle])) specs
-specAssembler (CssSpec mId Nothing mLang mStyle) (("class", nClass):specs) = specAssembler (CssSpec mId (Just nClass) mLang mStyle) specs
-specAssembler (CssSpec mId mClass mLang Nothing) (("style", nStyle):specs) = specAssembler (CssSpec mId mClass mLang (Just nStyle)) specs
-specAssembler (CssSpec mId mClass mLang mStyle) (("language", nLang):specs) = specAssembler (CssSpec mId mClass (Just nLang) mStyle) specs
-specAssembler s (x:xs) = specAssembler s xs
-specAssembler s [] = s
-
-cssSpec = do
+cssSpecWRaw = do
 	rawSpecs <- many $ choice [try classIdSpec, try languageSpec, try cssStyleSpec]
-	return $ specAssembler (CssSpec Nothing Nothing Nothing Nothing) $ concat rawSpecs
+	return $ specAssembler (CssSpec Nothing Nothing Nothing Nothing) (concat rawSpecs) ""
+
+cssSpec = cssSpecWRaw >>= (return . fst)
 
 many1Till p end = do
 	notFollowedBy end
@@ -176,18 +165,21 @@ classIdSpec = do
 	certainlyClassSpec <- cssClassSpec
 	maybeIdSpec <- optionMaybe $ try idSpec
 	char ')'
-	return $ (maybe [] (\a -> [("id", a)]) maybeIdSpec) ++ [("class", certainlyClassSpec)]
+	-- Careful reconstruction
+	return $ reverse $ [("straytext","","("), ("class", certainlyClassSpec, certainlyClassSpec)] ++ (maybe [] (\a -> [("id", a, '#':a)]) maybeIdSpec) ++ [("straytext", "", ")")]
 
 cssStyleSpec = do
 	char '{'
 	spec <- many1Till (noneOf "\n")  (char '}')
-	return [("style", spec)]
+	-- Careful reconstruction
+	return [("style", spec, printf "{%s}" spec)]
 
 -- This should be valid bcp47 language tag, but fuck this spec, let document author ensure that.
 languageSpec = do
 	char '['
 	spec <- many1Till (satisfy ((\a -> (isAlphaNum a) || (a == '-')))) (char ']')
-	return [("language", spec)]
+	-- Careful reconstruction
+	return [("language", spec, printf "[%s]" spec)]
 
 lineBreak = do
 	optionMaybe inlineSpace
@@ -208,7 +200,9 @@ nonlinkWordEndTag = (<?> "nonlink word end tag") $ do
 	return wet
 
 wordStartTag = (<?> "word start tag") $ do
-	choice [try italicStart, try boldStart, emphStart, strongStart]
+	wst <- choice [try italicStart, try boldStart, try emphStart, try strongStart]
+	lookAhead $ choice [voidTry wordStartTag, voidTry wordPiece]
+	return wst
 
 linkEnd = (choice [voidTry wordEndTag, void space, eof, try paragraphBreak])
 
@@ -270,43 +264,43 @@ image = do
 
 italicStart = do
 	string "__"
-	cssSpecV <- cssSpec
+	(cssSpecV, specsText) <- cssSpecWRaw
 	notFollowedBy wordBreak
-	return $ TagStart Italic cssSpecV
+	return $ TagStart ("__" ++ specsText) Italic cssSpecV
 
 boldStart = do
 	string "**"
-	cssSpecV <- cssSpec
+	(cssSpecV, specsText) <- cssSpecWRaw
 	notFollowedBy wordBreak
-	return $ TagStart Bold cssSpecV
+	return $ TagStart ("**" ++ specsText) Bold cssSpecV
 
 emphStart = do
 	char '_'
-	cssSpecV <- cssSpec
+	(cssSpecV, specsText) <- cssSpecWRaw
 	notFollowedBy wordBreak
-	return $ TagStart Emph cssSpecV
+	return $ TagStart ("_" ++ specsText) Emph cssSpecV
 
 strongStart = do
 	char '*'
-	cssSpecV <- cssSpec
+	(cssSpecV, specsText) <- cssSpecWRaw
 	notFollowedBy wordBreak
-	return $ TagStart Strong cssSpecV
+	return $ TagStart ("*" ++ specsText) Strong cssSpecV
 
 emphEnd = do
 	char '_'
-	return $ TagEnd Emph
+	return $ TagEnd "_" Emph
 
 strongEnd = do
 	char '*'
-	return $ TagEnd Strong
+	return $ TagEnd "*" Strong
 
 italicEnd = do
 	string "__"
-	return $ TagEnd Italic
+	return $ TagEnd "__" Italic
 
 boldEnd = do
 	string "__"
-	return $ TagEnd Bold
+	return $ TagEnd "__" Bold
 
 inlineSpace = do
 	many1 $ satisfy (\c -> isSpace c && c /= '\n')
@@ -326,20 +320,20 @@ nonlinkPlainWord = do
 	return (Plaintext (sc:scs))
 
 nonlinkWord = do
-	starts <- many $ wordStartTag
+	starts <- many $ try wordStartTag
 	wPiece <- nonlinkWordPiece
 	wordPieces <- manyTill nonlinkWordPiece (lookAhead $ choice [void wordBreak, voidTry nonlinkWordEndTag, voidTry linkTitlePart, voidTry linkUriPart])
-	ends <- many $ nonlinkWordEndTag
+	ends <- many $ try nonlinkWordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
 nonlinkWordPiece = (choice [try image, try trailingPunctuation, try nonlinkPlainWord]) 
 wordPiece = (choice [try image, try link, try trailingPunctuation, try plainWord]) 
 
 word = do
-	starts <- many $ wordStartTag
+	starts <- many $ try wordStartTag
 	wPiece <- wordPiece
 	wordPieces <- manyTill wordPiece (lookAhead $ choice [wordBreak, voidTry wordEndTag])
-	ends <- many $ wordEndTag
+	ends <- many $ try wordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
 document = do
@@ -370,14 +364,14 @@ paragraph = do
 findOpeningTag' :: [Chunk] -> Integer -> [Chunk] -> Chunk -> Maybe [Chunk]
 findOpeningTag' processedChunks skip [] tag = Nothing
 findOpeningTag' processedChunks skip (lastChunk:chunks) tag =
-	if closingTag lastChunk == Just tag then
+	if doesClose lastChunk tag then
 		if skip > 0 then
 			findOpeningTag' (lastChunk:processedChunks) (skip-1) chunks tag 
 			else
 			Just (reverse processedChunks ++ (lastChunk:chunks))
-		else if lastChunk == tag then
+		else if tag == lastChunk then
 			findOpeningTag' (lastChunk:processedChunks) (skip+1) chunks tag 
-		else if isJust (closingTag lastChunk) then
+		else if isOpeningTag lastChunk then
 			findOpeningTag' ((Plaintext $ toPlainText lastChunk):processedChunks) skip chunks tag
 		else findOpeningTag' (lastChunk:processedChunks) skip chunks tag 
 
@@ -404,7 +398,7 @@ widowScanner [] ((nextNumber, nextChunk):chunks) =
 		widowScanner [] chunks
 widowScanner openedTags [] = openedTags
 widowScanner openedTags@((lastNumber, lastOpen):restOpen) ((nextNumber, nextChunk):chunks) =
-	if closingTag lastOpen == Just nextChunk then
+	if doesClose lastOpen nextChunk then
 		widowScanner restOpen chunks
 		else if isOpeningTag nextChunk then
 			widowScanner ((nextNumber, nextChunk):openedTags) chunks
