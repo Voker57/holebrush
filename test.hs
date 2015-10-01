@@ -19,6 +19,21 @@ import qualified Data.Text as T
 import Control.Monad
 import Text.Printf
 import PairedTag
+import qualified Data.Set as Set
+import System.Console.GetOpt
+import System.Environment (getArgs)
+
+data Opts = Opts { disableImages :: Bool, disableLinks :: Bool }
+
+options :: [OptDescr (Opts -> Opts)]
+options = [
+	Option [] ["no-images"]
+		(NoArg (\o -> o {disableImages = True}) ) "Disable images",
+	Option [] ["no-links"]
+		(NoArg (\o -> o {disableLinks = True})) "Disable links"
+	]
+
+defaultOptions = Opts { disableImages = False, disableLinks = False }
 
 class Renderable a where
 	render :: a -> String
@@ -42,8 +57,11 @@ data Chunk =
 	| Whitespace 
 	| Link CssSpec [Chunk] String (Maybe String)
 	| LineBreak
-
 	deriving (Eq, Show)
+
+data ParseFlag = NoLinks | NoImages deriving (Eq, Show, Ord)
+
+data ParserState = ParserState { parseFlags :: Set.Set ParseFlag } deriving (Eq, Show)
 
 instance Renderable CssSpec where
 	render (CssSpec mId mClass mLang mStyle) = concat [maybe "" (printf " id=\"%s\"") mId, maybe "" (printf " class=\"%s\"") mClass, maybe "" (printf " lang=\"%s\"") mLang, maybe "" (printf " style=\"%s\"") mStyle]
@@ -71,6 +89,14 @@ instance (Renderable a) => Renderable [a] where
 	render xs = concat $ map (render) xs
 
 voidTry = void . try
+
+mixIf :: a -> Bool -> [a]
+mixIf entry condition = if condition then [entry] else []
+
+parseFlagOn :: ParserState -> ParseFlag -> Bool
+parseFlagOn state flag = Set.member flag (parseFlags state)
+
+processOptions def = foldl (flip ($)) def
 
 -- Stolen shit
 spanList :: ([a] -> Bool) -> [a] -> ([a], [a])
@@ -222,6 +248,8 @@ linkUriPart = do
 	return uri
 
 link = do
+	state <- getState
+	when (parseFlagOn state NoLinks) (fail "Links disabled")
 	char '"'
 	cssSpecV <- cssSpec
 	textTuples <- manyTill nonlinkWordAndSpace (lookAhead $ choice [voidTry linkTitlePart, voidTry linkUriPart]) 
@@ -254,12 +282,17 @@ imageLink = do
 imageEndingBang = char '!' >> choice [voidTry imageLink, voidTry trailingPunctuation, voidTry wordEndTag, wordBreak]
 
 image = do
+	state <- getState
+	when (parseFlagOn state NoImages) (fail "Images disabled")
 	char '!'
 	cssSpecV <- cssSpec
-	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; optionMaybe $ voidTry imageLink})
+	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; when (not $ parseFlagOn state NoLinks) (voidTry $ optionMaybe $ imageLink)})
 	imageAltString <- optionMaybe $ try imageTitlePart
 	char '!'
-	imageLinkString <- optionMaybe $ try imageLink
+	imageLinkString <- if parseFlagOn state NoLinks then
+		return Nothing
+		else
+		optionMaybe $ try imageLink
 	return $ Image cssSpecV imageSrcStr imageAltString imageLinkString
 
 italicStart = do
@@ -326,8 +359,9 @@ nonlinkWord = do
 	ends <- many $ try nonlinkWordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
-nonlinkWordPiece = (choice [try image, try trailingPunctuation, try nonlinkPlainWord]) 
-wordPiece = (choice [try image, try link, try trailingPunctuation, try plainWord]) 
+nonlinkWordPiece = choice [try image, try trailingPunctuation, try nonlinkPlainWord]
+
+wordPiece = choice [try image, try link, try trailingPunctuation, try plainWord]
 
 word = do
 	starts <- many $ try wordStartTag
@@ -419,8 +453,12 @@ widowReaper chunks = let
 sanitize = orphanReaper . widowReaper
 
 main = do
+	args <- getArgs
+	let (optz, argz, errs) = getOpt Permute options args
+	let opts = processOptions defaultOptions optz
+	let ourParseFlags = (mixIf NoImages (disableImages opts)) ++ (mixIf NoLinks (disableLinks opts))
 	input <- getContents
-	let rl = parse document "stdio" $ T.strip $ T.pack input
+	let rl = runParser document (ParserState { parseFlags = Set.fromList ourParseFlags}) "stdio" $ T.strip $ T.pack input
 	print rl
 	case rl of
 		Right text -> do
