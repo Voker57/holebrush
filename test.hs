@@ -40,7 +40,11 @@ defaultOptions = Opts { disableImages = False, disableLinks = False }
 class Renderable a where
 	render :: a -> String
 
-data Paragraph = Paragraph CssSpec [Chunk] deriving (Show, Eq)
+data TocHeading = TocHeading HeadingLevel [Chunk] [TocHeading] deriving (Show, Eq)
+
+data HeadingLevel = H1 | H2 | H3 | H4 | H5 | H6 deriving (Show, Eq, Ord)
+
+data Paragraph = Paragraph CssSpec [Chunk] | Heading HeadingLevel CssSpec [Chunk] | TableOfContents CssSpec TocHeading deriving (Show, Eq)
 
 data CssSpec = CssSpec
 	(Maybe String) -- ID
@@ -70,6 +74,13 @@ instance Renderable CssSpec where
 
 instance Renderable Paragraph where
 	render (Paragraph spec chunks) = "<p" ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</p>"
+	render (Heading lvl spec chunks) = let
+		lvlNum = case lvl of H1 -> "1"; H2 -> "2"; H3 -> "3"; H4 -> "4"; H5 -> "5"; H6 -> "6"
+		in "<h" ++ lvlNum ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</h" ++ lvlNum ++ ">"
+	render (TableOfContents spec (TocHeading _ _ headings)) = "<div class='toc'" ++ render spec ++ "> <ol>" ++ render headings ++ "</ol> </div>"
+
+instance Renderable TocHeading where
+	render (TocHeading hlvl chunks headings) = "<li>" ++ render chunks ++ (if null headings then "" else ("<ol>" ++ render headings ++ "</ol>")) ++ "</li>"
 
 instance Renderable Chunk where
 	render (TagStart _ Italic spec) = "<i" ++ render spec ++ ">"
@@ -372,9 +383,29 @@ word = do
 	ends <- many $ try wordEndTag
 	return (starts ++ wPiece:wordPieces ++ ends)
 
+tocTag = do
+	string "toc"
+	cssSpecV <- cssSpec
+	char '.'
+	-- Rather ugly.
+	return $ TableOfContents cssSpecV (error "Attempt to render non-filled ToC")
+
+heading = do
+	let levelMap l = case l of '1' -> H1; '2' -> H2; '3' -> H3; '4' -> H4; '5' -> H5; '6' -> H6;
+	string "h"
+	levelChar <- oneOf "123456"
+	cssSpecV <- cssSpec
+	char '.'
+	whitespace
+	wordsSpaces <- many wordAndSpace
+	let tupleFunc a = case a of
+		(s, Nothing) -> s
+		(s, Just w) -> s ++ w
+	return $ Heading (levelMap levelChar) cssSpecV (concat $ map (tupleFunc) wordsSpaces)
+
 document = do
 	option () $ void whitespace
-	paragraphs <- paragraph `sepBy` paragraphBreak
+	paragraphs <- choice [try tocTag, try heading, paragraph] `sepBy` paragraphBreak
 	option () $ void whitespace
 	return paragraphs
 
@@ -454,6 +485,9 @@ widowReaper chunks = let
 
 sanitize = orphanReaper . widowReaper
 
+tocDeepInsert (TocHeading tlvl tpieces headings) h@(Heading hlvl _ pieces) = if (tlvl == hlvl) || (null headings) then TocHeading tlvl tpieces (headings ++ [TocHeading hlvl pieces []]) else TocHeading tlvl tpieces (init headings ++ [tocDeepInsert (last headings) h])
+tocDeepInsert a _ = a
+
 main = do
 	args <- getArgs
 	let (optz, argz, errs) = getOpt Permute options args
@@ -464,6 +498,11 @@ main = do
 	print rl
 	case rl of
 		Right text -> do
-			let sanitizedText = map (\(Paragraph c pieces) -> Paragraph c $ orphanReaper $ widowReaper pieces) text
-			putStrLn $ render sanitizedText
+			let piecesCleaner = orphanReaper . widowReaper
+			let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
+			putStrLn $ render $ sanitizedText
+			let toc = foldl (tocDeepInsert) (TocHeading H1 [] []) sanitizedText
+			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
+			let tocdText = map (tocInjector toc) sanitizedText
+			putStrLn $ render $ tocdText
 		Left err -> print err
