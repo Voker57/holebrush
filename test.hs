@@ -495,14 +495,13 @@ main = do
 	let ourParseFlags = (mixIf NoImages (disableImages opts)) ++ (mixIf NoLinks (disableLinks opts))
 	input <- getContents
 	let rl = runParser document (ParserState { parseFlags = Set.fromList ourParseFlags}) "stdio" $ T.strip $ T.pack input
-	print rl
 	case rl of
 		Right text -> do
 			let piecesCleaner = orphanReaper . widowReaper
 			let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
-			putStrLn $ render $ sanitizedText
 			let toc = foldl (tocDeepInsert) (TocHeading H1 [] []) sanitizedText
 			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
 			let tocdText = map (tocInjector toc) sanitizedText
+			print tocdText
 			putStrLn $ render $ tocdText
 		Left err -> print err
