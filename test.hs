@@ -6,6 +6,8 @@
 
 -}
 
+{-# OPTIONS_GHC -fno-warn-tabs #-}
+
 module Main where
 
 import Data.List
