@@ -40,7 +40,7 @@ defaultOptions = Opts { disableImages = False, disableLinks = False }
 class Renderable a where
 	render :: a -> String
 
-data TocHeading = TocHeading HeadingLevel [Chunk] [TocHeading] deriving (Show, Eq)
+data TocHeading = TocHeading HeadingLevel String [Chunk] [TocHeading] deriving (Show, Eq)
 
 data HeadingLevel = H1 | H2 | H3 | H4 | H5 | H6 deriving (Show, Eq, Ord)
 
@@ -77,10 +77,10 @@ instance Renderable Paragraph where
 	render (Heading lvl spec chunks) = let
 		lvlNum = case lvl of H1 -> "1"; H2 -> "2"; H3 -> "3"; H4 -> "4"; H5 -> "5"; H6 -> "6"
 		in "<h" ++ lvlNum ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</h" ++ lvlNum ++ ">"
-	render (TableOfContents spec (TocHeading _ _ headings)) = "<div class='toc'" ++ render spec ++ "> <ol>" ++ render headings ++ "</ol> </div>"
+	render (TableOfContents spec (TocHeading _ _ _ headings)) = "<div class='toc'" ++ render spec ++ "> <ol>" ++ render headings ++ "</ol> </div>"
 
 instance Renderable TocHeading where
-	render (TocHeading hlvl chunks headings) = "<li>" ++ render chunks ++ (if null headings then "" else ("<ol>" ++ render headings ++ "</ol>")) ++ "</li>"
+	render (TocHeading hlvl hId chunks headings) = "<li> <a href='#" ++ escapeHTML hId ++ "'>" ++ render chunks ++ "</a>" ++ (if null headings then "" else ("<ol>" ++ render headings ++ "</ol>")) ++ "</li>"
 
 instance Renderable Chunk where
 	render (TagStart _ Italic spec) = "<i" ++ render spec ++ ">"
@@ -97,6 +97,12 @@ instance Renderable Chunk where
 	render (Image spec src altMaybe Nothing) = "<img" ++ render spec ++ " alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
 	render (Link spec text uri titleMaybe) = "<a" ++ render spec ++ " href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
 	render LineBreak = "<br />"
+
+toStrippedText :: Chunk -> String
+toStrippedText (Plaintext s) = s
+toStrippedText (Whitespace) = " "
+toStrippedText (Link _ text _ _) = concat $ map (toStrippedText) text
+toStrippedText _ = ""
 
 instance (Renderable a) => Renderable [a] where
 	render xs = concat $ map (render) xs
@@ -485,7 +491,11 @@ widowReaper chunks = let
 
 sanitize = orphanReaper . widowReaper
 
-tocDeepInsert (TocHeading tlvl tpieces headings) h@(Heading hlvl _ pieces) = if (tlvl == hlvl) || (null headings) then TocHeading tlvl tpieces (headings ++ [TocHeading hlvl pieces []]) else TocHeading tlvl tpieces (init headings ++ [tocDeepInsert (last headings) h])
+assignId h@(Heading _ (CssSpec (Just _) _ _ _) chunks) = h
+assignId (Heading hlvl (CssSpec Nothing a b c) chunks) = Heading hlvl (CssSpec (Just (concat $ map (toStrippedText) chunks)) a b c) chunks
+assignId a = a
+
+tocDeepInsert (TocHeading tlvl tid tpieces headings) h@(Heading hlvl (CssSpec (Just hId) _ _ _) pieces) = if (tlvl == hlvl) || (null headings) then TocHeading tlvl tid tpieces (headings ++ [TocHeading hlvl hId pieces []]) else TocHeading tlvl tid tpieces (init headings ++ [tocDeepInsert (last headings) h])
 tocDeepInsert a _ = a
 
 main = do
@@ -499,9 +509,10 @@ main = do
 		Right text -> do
 			let piecesCleaner = orphanReaper . widowReaper
 			let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
-			let toc = foldl (tocDeepInsert) (TocHeading H1 [] []) sanitizedText
+			let idAssignedText = map (assignId) sanitizedText
+			let toc = foldl (tocDeepInsert) (TocHeading H1 [] [] []) idAssignedText
 			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
-			let tocdText = map (tocInjector toc) sanitizedText
+			let tocdText = map (tocInjector toc) idAssignedText
 			print tocdText
 			putStrLn $ render $ tocdText
 		Left err -> print err
