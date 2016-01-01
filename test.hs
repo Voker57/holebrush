@@ -535,6 +535,6 @@ main = do
 			let toc = foldl (tocDeepStart) [] idAssignedText
 			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
 			let tocdText = map (tocInjector toc) idAssignedText
-			print tocdText
+-- 			print tocdText
 			putStrLn $ render $ tocdText
 		Left err -> print err
