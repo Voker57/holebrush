@@ -508,8 +508,8 @@ assignId a = a
 tocDeepInsert (TocHeading tlvl tid tpieces headings) h@(Heading hlvl (CssSpec (Just hId) _ _ _) pieces) =
 	if (null headings) then
 		TocHeading tlvl tid tpieces [TocHeading hlvl hId pieces []]
-		else let (TocHeading ltlvl _ _ _) = head headings in
-			if ltlvl == hlvl then
+		else let (TocHeading ltlvl _ _ _) = last headings in
+			if ltlvl >= hlvl then
 				(TocHeading tlvl tid tpieces (headings ++ [TocHeading hlvl hId pieces []]))
 				else
 				TocHeading tlvl tid tpieces (init headings ++ [tocDeepInsert (last headings) h])
