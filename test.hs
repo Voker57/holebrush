@@ -203,15 +203,15 @@ idSpec = do
 	many1Till (satisfy (not . isSpace)) (lookAhead $ char ')')
 
 cssClassSpec = do
-	many1Till (noneOf "\n") (lookAhead $ choice [string ")", idSpec])
+	many1Till (noneOf "\n#") (lookAhead $ choice [string ")", idSpec])
 
 classIdSpec = do
 	char '('
-	certainlyClassSpec <- cssClassSpec
+	maybeClassSpec <- optionMaybe $ try cssClassSpec
 	maybeIdSpec <- optionMaybe $ try idSpec
 	char ')'
 	-- Careful reconstruction
-	return $ reverse $ [("straytext","","("), ("class", certainlyClassSpec, certainlyClassSpec)] ++ (maybe [] (\a -> [("id", a, '#':a)]) maybeIdSpec) ++ [("straytext", "", ")")]
+	return $ reverse $ [("straytext","","(")] ++ (maybe [] (\a -> [("id", a, '#':a)]) maybeIdSpec) ++ (maybe [] (\a -> [("class", a, a)]) maybeClassSpec) ++ [("straytext", "", ")")]
 
 cssStyleSpec = do
 	char '{'
