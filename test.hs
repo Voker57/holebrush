@@ -44,7 +44,7 @@ data TocHeading = TocHeading HeadingLevel String [Chunk] [TocHeading] deriving (
 
 data HeadingLevel = H1 | H2 | H3 | H4 | H5 | H6 deriving (Show, Eq, Ord)
 
-data Paragraph = Paragraph CssSpec [Chunk] | Heading HeadingLevel CssSpec [Chunk] | TableOfContents CssSpec TocHeading deriving (Show, Eq)
+data Paragraph = Paragraph CssSpec [Chunk] | Heading HeadingLevel CssSpec [Chunk] | TableOfContents CssSpec [TocHeading] deriving (Show, Eq)
 
 data CssSpec = CssSpec
 	(Maybe String) -- ID
@@ -77,7 +77,7 @@ instance Renderable Paragraph where
 	render (Heading lvl spec chunks) = let
 		lvlNum = case lvl of H1 -> "1"; H2 -> "2"; H3 -> "3"; H4 -> "4"; H5 -> "5"; H6 -> "6"
 		in "<h" ++ lvlNum ++ render spec ++ ">" ++ (concat $ map (render) chunks) ++ "</h" ++ lvlNum ++ ">"
-	render (TableOfContents spec (TocHeading _ _ _ headings)) = "<div class='toc'" ++ render spec ++ "> <ol>" ++ render headings ++ "</ol> </div>"
+	render (TableOfContents spec headings) = "<div class='toc'" ++ render spec ++ "> <ol>" ++ render headings ++ "</ol> </div>"
 
 instance Renderable TocHeading where
 	render (TocHeading hlvl hId chunks headings) = "<li> <a href='#" ++ escapeHTML hId ++ "'>" ++ render chunks ++ "</a>" ++ (if null headings then "" else ("<ol>" ++ render headings ++ "</ol>")) ++ "</li>"
@@ -409,7 +409,7 @@ heading = do
 	levelChar <- oneOf "123456"
 	cssSpecV <- cssSpec
 	char '.'
-	inlineWordAndSpace
+	inlineWhitespace
 	wordsSpaces <- many inlineWordAndSpace
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
@@ -505,8 +505,20 @@ assignId h@(Heading _ (CssSpec (Just _) _ _ _) chunks) = h
 assignId (Heading hlvl (CssSpec Nothing a b c) chunks) = Heading hlvl (CssSpec (Just (concat $ map (toStrippedText) chunks)) a b c) chunks
 assignId a = a
 
-tocDeepInsert (TocHeading tlvl tid tpieces headings) h@(Heading hlvl (CssSpec (Just hId) _ _ _) pieces) = if (tlvl == hlvl) || (null headings) then TocHeading tlvl tid tpieces (headings ++ [TocHeading hlvl hId pieces []]) else TocHeading tlvl tid tpieces (init headings ++ [tocDeepInsert (last headings) h])
+tocDeepInsert (TocHeading tlvl tid tpieces headings) h@(Heading hlvl (CssSpec (Just hId) _ _ _) pieces) =
+	if (null headings) then
+		TocHeading tlvl tid tpieces [TocHeading hlvl hId pieces []]
+		else let (TocHeading ltlvl _ _ _) = head headings in
+			if ltlvl == hlvl then
+				(TocHeading tlvl tid tpieces (headings ++ [TocHeading hlvl hId pieces []]))
+				else
+				TocHeading tlvl tid tpieces (init headings ++ [tocDeepInsert (last headings) h])
 tocDeepInsert a _ = a
+
+tocDeepStart [] h@(Heading hlvl (CssSpec (Just hId) _ _ _) pieces) = [TocHeading hlvl hId pieces []]
+tocDeepStart hs h@(Heading H1 (CssSpec (Just hId) _ _ _) pieces) = hs ++ [TocHeading H1 hId pieces []]
+tocDeepStart hs h@(Heading _ _ _) = (init hs) ++ [tocDeepInsert (last hs) h]
+tocDeepStart hs _ = hs
 
 main = do
 	args <- getArgs
@@ -520,7 +532,7 @@ main = do
 			let piecesCleaner = orphanReaper . widowReaper
 			let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
 			let idAssignedText = map (assignId) sanitizedText
-			let toc = foldl (tocDeepInsert) (TocHeading H1 [] [] []) idAssignedText
+			let toc = foldl (tocDeepStart) [] idAssignedText
 			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
 			let tocdText = map (tocInjector toc) idAssignedText
 			print tocdText
