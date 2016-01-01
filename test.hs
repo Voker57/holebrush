@@ -252,8 +252,8 @@ wordStartTag = (<?> "word start tag") $ do
 linkEnd = (choice [voidTry wordEndTag, void space, eof, try paragraphBreak])
 
 trailingPunctuation = do
-	punctChar <- satisfy (isPunctuation)
-	punctChars <- manyTill (satisfy (isPunctuation)) (lookAhead linkEnd)
+	punctChar <- satisfy (\c -> isPunctuation c && c /= '/')
+	punctChars <- manyTill (satisfy (\c -> isPunctuation c && c /= '/')) (lookAhead linkEnd)
 	return $ Plaintext (punctChar:punctChars)
 
 nonlinkWordAndSpace = do
