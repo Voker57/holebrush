@@ -288,7 +288,7 @@ linkTitlePart = do
 
 imageTitlePart = do
 	char '('
-	str <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ try $ do { char ')'; imageEndingBang})
+	str <- manyTill (noneOf ")") (lookAhead $ try $ do { char ')'; imageEndingBang})
 	char ')'
 	lookAhead imageEndingBang
 	return str
