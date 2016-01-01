@@ -256,9 +256,14 @@ trailingPunctuation = do
 	punctChars <- manyTill (satisfy (\c -> isPunctuation c && c /= '/')) (lookAhead linkEnd)
 	return $ Plaintext (punctChar:punctChars)
 
+inlineWordAndSpace = do
+	wrd <- word
+	spc <- optionMaybe inlineWhitespace
+	return (wrd, spc)
+
 nonlinkWordAndSpace = do
 	wrd <- nonlinkWord
-	spc <- optionMaybe whitespace
+	spc <- optionMaybe inlineWhitespace
 	return (wrd, spc)
 
 linkUriPart = do
@@ -281,14 +286,14 @@ link = do
 
 linkTitlePart = do
 	char '('
-	str <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ try $ do { char ')'; linkUriPart })
+	str <- manyTill (noneOf ")\n") (lookAhead $ try $ do { char ')'; linkUriPart })
 	char ')'
 	lookAhead linkUriPart
 	return str
 
 imageTitlePart = do
 	char '('
-	str <- manyTill (noneOf ")") (lookAhead $ try $ do { char ')'; imageEndingBang})
+	str <- manyTill (noneOf ")\n") (lookAhead $ try $ do { char ')'; imageEndingBang})
 	char ')'
 	lookAhead imageEndingBang
 	return str
@@ -360,6 +365,8 @@ inlineSpace = do
 
 whitespace = manyTill (choice [try lineBreak, inlineSpace]) (lookAhead $ choice [void $ satisfy (not . isSpace), voidTry $ string "\n\n", eof])
 
+inlineWhitespace = manyTill inlineSpace (lookAhead $ choice [void $ satisfy (not . isSpace), voidTry $ string "\n\n", eof])
+
 plainWord = do
 	sc <- satisfy (not . isSpace)
 	scs <- manyTill (satisfy (not . isSpace)) (lookAhead $ choice [voidTry wordEndTag, void space, eof, voidTry paragraphBreak, void $ char '"'])
@@ -402,8 +409,8 @@ heading = do
 	levelChar <- oneOf "123456"
 	cssSpecV <- cssSpec
 	char '.'
-	whitespace
-	wordsSpaces <- many wordAndSpace
+	inlineWordAndSpace
+	wordsSpaces <- many inlineWordAndSpace
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
 		(s, Just w) -> s ++ w
