@@ -427,7 +427,10 @@ wordAndSpace = do
 	return (wrd, spc)
 
 paragraph = do
+	option undefined (string "p")
 	cssSpecV <- cssSpec
+	option undefined (string ".")
+	option undefined whitespace
 	wordsSpaces <- many wordAndSpace
 	let tupleFunc a = case a of
 		(s, Nothing) -> s
