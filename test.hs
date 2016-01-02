@@ -94,7 +94,7 @@ instance Renderable Chunk where
 	render (Plaintext s) = s
 	render Whitespace = " "
 	render (Image spec src altMaybe (Just linkUri)) = render $ Link emptyCssSpec [(Image spec src altMaybe Nothing)] linkUri Nothing
-	render (Image spec src altMaybe Nothing) = "<img" ++ render spec ++ " alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\" />"
+	render (Image spec src altMaybe Nothing) = "<img" ++ render spec ++ " alt=\"" ++ escapeHTML (fromMaybe "" altMaybe) ++ "\" src=\"" ++ escapeHTML src ++ "\"" ++ (maybe "" (\alt -> " title=\""++alt++"\"") altMaybe) ++ " />"
 	render (Link spec text uri titleMaybe) = "<a" ++ render spec ++ " href=\"" ++ escapeHTML uri ++ "\"" ++ (case titleMaybe of Just title -> " title=\"" ++ escapeHTML title ++ "\""; Nothing -> "") ++ ">" ++ concat (map (render) text) ++ "</a>"
 	render LineBreak = "<br />"
 
