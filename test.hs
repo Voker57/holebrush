@@ -242,7 +242,7 @@ wordEndTag = (<?> "word end tag") $ do
 
 nonlinkWordEndTag = (<?> "nonlink word end tag") $ do
 	wet <- choice [try italicEnd, try boldEnd, emphEnd, strongEnd]
-	lookAhead $ choice [voidTry nonlinkWordEndTag, voidTry linkTitlePart, void space, eof]
+	lookAhead $ choice [voidTry nonlinkWordEndTag, voidTry linkTitlePart, voidTry linkUriPart, void space, eof]
 	return wet
 
 wordStartTag = (<?> "word start tag") $ do
@@ -304,8 +304,8 @@ uriChar c = or $ map (\a -> a c) [okInUserinfo, okInQuery, okInQueryItem, okInFr
 
 imageLink = do
 	char ':'
-	str <- many $ satisfy (uriChar)
-	return str
+	uri <- manyTill (satisfy uriChar) $ lookAhead $ choice [voidTry trailingPunctuation, voidTry linkEnd]
+	return uri
 
 imageEndingBang = char '!' >> choice [voidTry imageLink, voidTry trailingPunctuation, voidTry wordEndTag, wordBreak]
 
@@ -314,7 +314,7 @@ image = do
 	when (parseFlagOn state NoImages) (fail "Images disabled")
 	char '!'
 	cssSpecV <- cssSpec
-	imageSrcStr <- manyTill (satisfy (\c -> (not $ isSpace c))) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; when (not $ parseFlagOn state NoLinks) (voidTry $ optionMaybe $ imageLink)})
+	imageSrcStr <- manyTill (satisfy uriChar) (lookAhead $ do { choice [voidTry imageEndingBang, voidTry $ do {imageTitlePart; imageEndingBang}]; when (not $ parseFlagOn state NoLinks) (voidTry $ optionMaybe $ imageLink)})
 	imageAltString <- optionMaybe $ try imageTitlePart
 	char '!'
 	imageLinkString <- if parseFlagOn state NoLinks then
