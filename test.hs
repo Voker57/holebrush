@@ -524,6 +524,8 @@ tocDeepStart hs h@(Heading H1 (CssSpec (Just hId) _ _ _) pieces) = hs ++ [TocHea
 tocDeepStart hs h@(Heading _ _ _) = (init hs) ++ [tocDeepInsert (last hs) h]
 tocDeepStart hs _ = hs
 
+dirtyParse w s = runParser w (ParserState {parseFlags=Set.fromList []}) "" $ T.pack s
+
 main = do
 	args <- getArgs
 	let (optz, argz, errs) = getOpt Permute options args
