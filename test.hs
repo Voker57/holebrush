@@ -24,6 +24,7 @@ import PairedTag
 import qualified Data.Set as Set
 import System.Console.GetOpt
 import System.Environment (getArgs)
+import Text.URI
 
 data Opts = Opts { disableImages :: Bool, disableLinks :: Bool }
 
@@ -249,10 +250,11 @@ wordStartTag = (<?> "word start tag") $ do
 	lookAhead $ choice [voidTry wordStartTag, voidTry wordPiece]
 	return wst
 
-linkEnd = (choice [voidTry wordEndTag, void space, eof, try paragraphBreak])
+linkEnd = (choice [voidTry wordEndTag, voidTry linkUriPart, void space, eof, try paragraphBreak])
 
 trailingPunctuation = do
-	punctChar <- satisfy (\c -> isPunctuation c && c /= '/')
+	notFollowedBy (linkEnd)
+	punctChar <- satisfy (\c -> isPunctuation c && c /= '/' && c /= '/')
 	punctChars <- manyTill (satisfy (\c -> isPunctuation c && c /= '/')) (lookAhead linkEnd)
 	return $ Plaintext (punctChar:punctChars)
 
@@ -268,7 +270,7 @@ nonlinkWordAndSpace = do
 
 linkUriPart = do
 	string "\":"
-	uri <- manyTill (satisfy (not . isSpace)) $ lookAhead $ choice [voidTry trailingPunctuation, voidTry linkEnd]
+	uri <- manyTill (satisfy uriChar) $ lookAhead $ choice [voidTry trailingPunctuation, voidTry linkEnd]
 	return uri
 
 link = do
@@ -298,9 +300,11 @@ imageTitlePart = do
 	lookAhead imageEndingBang
 	return str
 
+uriChar c = or $ map (\a -> a c) [okInUserinfo, okInQuery, okInQueryItem, okInFragment, okInPath, okInPathSegment]
+
 imageLink = do
 	char ':'
-	str <- many $ satisfy (not . isSpace)
+	str <- many $ satisfy (uriChar)
 	return str
 
 imageEndingBang = char '!' >> choice [voidTry imageLink, voidTry trailingPunctuation, voidTry wordEndTag, wordBreak]
