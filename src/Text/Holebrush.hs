@@ -1,14 +1,4 @@
-{- 
-
-% ./test <<< "_______________________________________huita________________________________________hui"                                                                                                                           
-<em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em><em>huita________________________________________hui
-</em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em></em>
-
--}
-
-{-# OPTIONS_GHC -fno-warn-tabs #-}
-
-module Main where
+module Text.Holebrush  where
 
 import Data.List
 import Data.Maybe
@@ -20,23 +10,9 @@ import Data.List
 import qualified Data.Text as T
 import Control.Monad
 import Text.Printf
-import PairedTag
+import Text.Holebrush.PairedTag
 import qualified Data.Set as Set
-import System.Console.GetOpt
-import System.Environment (getArgs)
 import Text.URI
-
-data Opts = Opts { disableImages :: Bool, disableLinks :: Bool }
-
-options :: [OptDescr (Opts -> Opts)]
-options = [
-	Option [] ["no-images"]
-		(NoArg (\o -> o {disableImages = True}) ) "Disable images",
-	Option [] ["no-links"]
-		(NoArg (\o -> o {disableLinks = True})) "Disable links"
-	]
-
-defaultOptions = Opts { disableImages = False, disableLinks = False }
 
 class Renderable a where
 	render :: a -> String
@@ -526,21 +502,14 @@ tocDeepStart hs _ = hs
 
 dirtyParse w s = runParser w (ParserState {parseFlags=Set.fromList []}) "" $ T.pack s
 
-main = do
-	args <- getArgs
-	let (optz, argz, errs) = getOpt Permute options args
-	let opts = processOptions defaultOptions optz
-	let ourParseFlags = (mixIf NoImages (disableImages opts)) ++ (mixIf NoLinks (disableLinks opts))
-	input <- getContents
-	let rl = runParser document (ParserState { parseFlags = Set.fromList ourParseFlags}) "stdio" $ T.strip $ T.pack input
-	case rl of
-		Right text -> do
-			let piecesCleaner = orphanReaper . widowReaper
-			let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
-			let idAssignedText = map (assignId) sanitizedText
-			let toc = foldl (tocDeepStart) [] idAssignedText
-			let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
-			let tocdText = map (tocInjector toc) idAssignedText
--- 			print tocdText
-			putStrLn $ render $ tocdText
-		Left err -> print err
+toHtml :: T.Text -> [ParseFlag] -> Either String T.Text
+toHtml input givenParseFlags = case runParser document (ParserState { parseFlags = Set.fromList givenParseFlags}) "stdio" $ input of
+	Right text -> do
+		let piecesCleaner = orphanReaper . widowReaper
+		let sanitizedText = map (\t -> case t of Paragraph c pieces -> Paragraph c $ piecesCleaner pieces; Heading l c pieces -> Heading l c $ piecesCleaner pieces; a -> a) text
+		let idAssignedText = map (assignId) sanitizedText
+		let toc = foldl (tocDeepStart) [] idAssignedText
+		let tocInjector ttoc p = case p of TableOfContents cs _ -> TableOfContents cs ttoc; a -> a;
+		let tocdText = map (tocInjector toc) idAssignedText
+		Right $ T.pack $ render $ tocdText
+	Left err -> (Left (show err))
