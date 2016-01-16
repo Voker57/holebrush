@@ -10,6 +10,8 @@ import qualified Data.Text as T
 
 data Opts = Opts { disableImages :: Bool, disableLinks :: Bool }
 
+processOptions def = foldl (flip ($)) def
+
 options :: [OptDescr (Opts -> Opts)]
 options = [
 	Option [] ["no-images"]
@@ -19,6 +21,9 @@ options = [
 	]
 
 defaultOptions = Opts { disableImages = False, disableLinks = False }
+
+mixIf :: a -> Bool -> [a]
+mixIf entry condition = if condition then [entry] else []
 
 main = do
 	args <- getArgs
